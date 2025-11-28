@@ -124,6 +124,8 @@ async function getOngoingChannel() {
   return await getAnnounceChannel()
 }
 
+// Canal de Ready Check configurável via variável de ambiente
+// Usa `DISCORD_READY_CHANNEL_ID` e faz fallback para o canal de anúncios.
 async function getReadyChannel() {
   const id = process.env.DISCORD_READY_CHANNEL_ID || '1442962746537676831'
   if (id) {
@@ -464,6 +466,7 @@ function formatPlayers(list) {
     .join('\n')
 }
 
+// Formata jogadores como: Nome#TAG • Elo Divisão (Role) [• MVP]
 function formatPlayersResult(list, mvpName) {
   if (!Array.isArray(list)) return '-'
   const mvp = String(mvpName || '').trim().toLowerCase()
@@ -471,7 +474,7 @@ function formatPlayersResult(list, mvpName) {
     .map((p) => {
       if (!p || typeof p !== 'object') return '-'
       const nome = String(p.nome || '').trim()
-      const tag = String(p.tag || '').trim()
+      const tag = String(p.tag || '').trim().replace(/^#/, '')
       const handle = tag ? `${nome}#${tag}` : nome
       const elo = p.siteElo || p.elo || '-'
       const div = p.siteDivisao || p.divisao || ''
@@ -578,10 +581,13 @@ async function sendReadyCheckNotifications(doc) {
     } catch (e) { metrics.dmsFailed++ }
   }
   const channel = await getQueueChannel()
-  if (channel) {
+  // Canal de destino para Ready Check: prioriza `DISCORD_READY_CHANNEL_ID`
+  const readyChannel = await getReadyChannel()
+  const targetChannel = readyChannel || channel
+  if (targetChannel) {
     const playersStr = formatPlayersResult(players, '')
     try {
-      await channel.send({ content: `Ready Check iniciado! ${playersStr}` })
+      await targetChannel.send({ content: `Ready Check iniciado! ${playersStr}` })
       metrics.channelAnnouncements++
     } catch (e) {
       console.error('Falha ao enviar mensagem de canal:', e?.message || e)
@@ -657,7 +663,7 @@ function setupMatchListeners() {
       const doc = change.doc
       const data = doc.data()
       if (!data) return
-      if (change.type === 'added' && data.status === 'readyCheck') {
+      if (change.type === 'added' && (data.status === 'readyCheck' || data.status === 'pending')) {
         const createdMs = docCreatedMs(data)
         const nowMs = Date.now()
         const windowMs = 10 * 60 * 1000
@@ -688,8 +694,8 @@ function setupMatchListeners() {
             const blue = teams?.blue?.jogadores || teams?.team1?.jogadores || teams?.blue || []
             const red = teams?.red?.jogadores || teams?.team2?.jogadores || teams?.red || []
             const embed = new EmbedBuilder().setTitle('Partida em andamento').addFields(
-              { name: 'Time Azul', value: formatPlayers(blue) || '-', inline: true },
-              { name: 'Time Vermelho', value: formatPlayers(red) || '-', inline: true }
+              { name: 'Time Azul', value: formatPlayersResult(blue, '') || '-', inline: true },
+              { name: 'Time Vermelho', value: formatPlayersResult(red, '') || '-', inline: true }
             )
             const ch = await getOngoingChannel()
             if (ch) { try { await ch.send({ embeds: [embed] }) } catch {} }
