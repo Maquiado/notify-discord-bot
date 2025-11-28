@@ -42,7 +42,7 @@ const db = admin.firestore()
 const botStartTime = admin.firestore.Timestamp.now()
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.DirectMessages, GatewayIntentBits.GuildMembers],
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildMessages, GatewayIntentBits.DirectMessages],
   partials: [Partials.Channel]
 })
 
@@ -149,6 +149,7 @@ client.once('ready', async () => {
     console.error('Falha ao registrar comandos', e)
   }
   try { await publishDiscordConfig() } catch {}
+  try { await ensurePinnedHelpMessages() } catch {}
   setupMatchListeners()
   startOAuthServer()
 })
@@ -535,6 +536,50 @@ async function publishDiscordConfig() {
   try { await db.collection('config').doc('discord').set({ oauthClientId: clientId, oauthRedirectUri: redirectUri }, { merge: true }) } catch {}
 }
 
+// 📌 Mensagens fixas de instruções nos canais de Fila e Vínculo
+async function ensurePinnedHelpMessages() {
+  try {
+    const queueCh = await getQueueChannel()
+    const linkChId = process.env.DISCORD_LINK_CHANNEL_ID
+    const linkCh = linkChId ? await client.channels.fetch(linkChId).catch(()=>null) : null
+
+    async function ensurePinned(channel, content, marker){
+      if (!channel || channel.type !== ChannelType.GuildText) return
+      try {
+        const pins = await channel.messages.fetchPinned().catch(()=>null)
+        let mine = pins ? pins.find(m => m.author?.id === client.user?.id && String(m.content||'').startsWith(marker)) : null
+        if (mine) {
+          await mine.edit({ content }).catch(()=>{})
+        } else {
+          const sent = await channel.send({ content }).catch(()=>null)
+          if (sent) { try { await sent.pin() } catch {} }
+        }
+      } catch {}
+    }
+
+    const queueMarker = '📌 Guia da Fila'
+    const queueContent = [
+      '📌 Guia da Fila — como usar o bot:',
+      '• Use `/fila` para Entrar/Sair da fila.',
+      '• Use `/perfil` para ver Elo, Divisão e roles.',
+      '• Quando o matchmaking criar uma partida, você receberá DM com botões para Aceitar/Recusar.',
+      '• Também publicamos o Ready Check aqui com os jogadores e detalhes.',
+      '• Histórico: link nas mensagens de Resultado quando a partida finalizar.'
+    ].join('\n')
+    await ensurePinned(queueCh, queueContent, queueMarker)
+
+    const linkMarker = '📌 Guia de Vínculo'
+    const linkContent = [
+      '📌 Guia de Vínculo — conectar seu Discord ao site:',
+      '• Opção 1: `/linkuid <seu UID>` para vincular diretamente.',
+      '• Opção 2: `/linkcode` para gerar um código; depois use o código em Editar Perfil → Vincular pelo Código.',
+      '• Após vincular, deslogue e logue novamente no site para carregar o Discord.',
+      `• OAuth: acesse ${process.env.DISCORD_OAUTH_REDIRECT_URI || '—'} se habilitado.`
+    ].join('\n')
+    await ensurePinned(linkCh, linkContent, linkMarker)
+  } catch {}
+}
+
 async function sendReadyCheckNotifications(doc) {
   const data = doc.data()
   const createdMs = docCreatedMs(data)
@@ -639,9 +684,24 @@ async function sendFinalResult(doc) {
         const user = await client.users.fetch(discordId)
         const state = uid ? await getRankingState(uid) : { tier:'Ferro',divisao:'IV',xp:0 }
         const after = aplicarXp(state.tier, state.divisao, state.xp, !!isWin)
-        const delta = (after.xp - state.xp) + (after.tier!==state.tier || after.divisao!==state.divisao ? 0 : 0)
+        const deltaXp = after.xp - state.xp
+        const promoted = after.tier !== state.tier || after.divisao !== state.divisao
         const txt = isWin ? 'Vitória' : 'Derrota'
-        const msg = `Resultado da sua partida: ${txt} \nXP: ${state.xp} → ${after.xp} (${isWin?'+':'-'}30) \nNovo Elo: ${after.tier} ${after.divisao}`
+        const handle = (()=>{ const nome = String(p.nome||'').trim(); const tag = String(p.tag||'').trim().replace(/^#/,''); return tag ? `${nome}#${tag}` : nome })()
+        const promoTxt = promoted
+          ? (isWin ? `⬆️ Subiu para ${after.tier} ${after.divisao}` : `⬇️ Mudou para ${after.tier} ${after.divisao}`)
+          : `↔️ Permanece em ${after.tier} ${after.divisao}`
+        const mvpName1 = data.mvpResult?.time1 || ''
+        const mvpName2 = data.mvpResult?.time2 || ''
+        const isMvp = (String(p.nome||'').trim().toLowerCase() === String(mvpName1||'').trim().toLowerCase()) ||
+                      (String(p.nome||'').trim().toLowerCase() === String(mvpName2||'').trim().toLowerCase())
+        const mvpTxt = isMvp ? '\n🏆 Você foi o jogador mais honrado (MVP) nesta partida!' : ''
+        const msg = [
+          `Resultado da sua partida (${handle}): ${txt}`,
+          `XP: ${state.xp} → ${after.xp} (${deltaXp>=0?'+':''}${deltaXp})`,
+          promoTxt,
+          mvpTxt
+        ].filter(Boolean).join('\n')
         await user.send({ content: msg })
       } catch {}
     }
