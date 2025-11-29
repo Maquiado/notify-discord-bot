@@ -902,6 +902,46 @@ client.on('interactionCreate', async (interaction) => {
             await msg.edit({ embeds: [embed], components: [row] })
           }
           await interaction.reply({ content: 'Aceite registrado.', ephemeral: true })
+          try {
+            const uids = Array.isArray(d.uids) ? d.uids : []
+            const allAccepted = uids.length > 0 && uids.every(u => acceptMap[u] === 'accepted')
+            if (allAccepted) {
+              const t = d.times || {}
+              const time1 = t.time1 || d.time1 || { nome: 'Time Azul', jogadores: [] }
+              const time2 = t.time2 || d.time2 || { nome: 'Time Vermelho', jogadores: [] }
+              const historicoId = d.historicoId || matchId
+              const href = db.collection('historicoPartidas').doc(historicoId)
+              const payload = {
+                status: 'pending',
+                createdAt: admin.firestore.FieldValue.serverTimestamp(),
+                time1,
+                time2,
+                vencedor: 'Pendente',
+                readyDocId: matchId,
+                uids: Array.isArray(d.uids) ? d.uids : [],
+                pontuacaoDiferenca: typeof d.pontuacaoDiferenca === 'number' ? d.pontuacaoDiferenca : undefined,
+                isRandom: d.isRandom === true,
+                data: typeof d.data === 'string' ? d.data : undefined
+              }
+              await href.set(payload, { merge: true })
+              // remove todos aceitos da fila
+              for (const u of uids) { try { await queueDoc(u).delete().catch(()=>{}) } catch {} }
+              // fechar card e mover status
+              try { await deleteReadyPrompt(matchId) } catch {}
+              await mref.set({ status: 'confirmada', historicoId, confirmedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true })
+              // aviso público
+              try {
+                const ch = await getQueueChannel()
+                if (ch) {
+                  const embed = new EmbedBuilder().setTitle('Partida Pendente criada').addFields(
+                    { name: 'match_id', value: `${historicoId}`, inline: true },
+                    { name: 'Times', value: `${time1?.nome || 'Azul'} vs ${time2?.nome || 'Vermelho'}`, inline: true }
+                  ).setColor(0x5865F2).setThumbnail('attachment://lollogo.png').setImage('attachment://background.png')
+                  await ch.send({ embeds: [embed], files: brandAssets() })
+                }
+              } catch {}
+            }
+          } catch {}
         } catch {}
       } else if (action === 'decline') {
         await mref.update({ [`playersReady.${userId}`]: false })
