@@ -158,6 +158,18 @@ async function sendTemporaryChannelMessage(channel, payload, ms = 60 * 1000) {
   } catch {}
 }
 
+async function sendTemporaryDmMessage(discordId, payload, ms = 60 * 1000) {
+  try {
+    const user = await client.users.fetch(discordId)
+    const dm = await user.createDM()
+    const m = await dm.send(payload)
+    setTimeout(async () => {
+      try { const msg = await dm.messages.fetch(m.id).catch(()=>null); if (msg && msg.deletable) await msg.delete().catch(()=>{}) } catch {}
+    }, ms)
+    return m
+  } catch {}
+}
+
 function tokenizeTextNorm(textNorm){
   try { return String(textNorm||'').split(' ').filter(Boolean) } catch { return [] }
 }
@@ -563,7 +575,7 @@ client.on('interactionCreate', async (interaction) => {
               { name: 'Time 1', value: nomes1.join(', '), inline: true },
               { name: 'Time 2', value: nomes2.join(', '), inline: true }
             ).setColor(0x5865F2)
-            await interaction.channel.send({ embeds: [pub] })
+            await sendTemporaryChannelMessage(interaction.channel, { embeds: [pub] }, 60*1000)
           } catch {}
         } catch (e) {
           await interaction.reply({ content: 'Falha ao criar partida de teste.', ephemeral: true })
@@ -641,7 +653,7 @@ client.on('interactionCreate', async (interaction) => {
               .setImage(att.url)
               .setColor(0x57F287)
               .setThumbnail('attachment://lollogo.png')
-            await interaction.channel.send({ embeds: [pub], files: brandAssets() })
+            await sendTemporaryChannelMessage(interaction.channel, { embeds: [pub], files: brandAssets() }, 60*1000)
             console.log('[resultado]', new Date().toISOString(), 'public embed sent')
           } catch {}
         } catch (e) {
@@ -714,7 +726,7 @@ client.on('interactionCreate', async (interaction) => {
               .setImage(att.url)
               .setColor(0xFEE75C)
               .setThumbnail('attachment://lollogo.png')
-            await interaction.channel.send({ embeds: [pub], files: brandAssets() })
+            await sendTemporaryChannelMessage(interaction.channel, { embeds: [pub], files: brandAssets() }, 60*1000)
             console.log('[corrigirresultado]', new Date().toISOString(), 'public embed sent')
           } catch {}
         } catch (e) {
@@ -933,11 +945,11 @@ client.on('interactionCreate', async (interaction) => {
               try {
                 const ch = await getQueueChannel()
                 if (ch) {
-                  const embed = new EmbedBuilder().setTitle('Partida Pendente criada').addFields(
-                    { name: 'match_id', value: `${historicoId}`, inline: true },
-                    { name: 'Times', value: `${time1?.nome || 'Azul'} vs ${time2?.nome || 'Vermelho'}`, inline: true }
+                const embed = new EmbedBuilder().setTitle('Partida Pendente criada').addFields(
+                  { name: 'match_id', value: `${historicoId}`, inline: true },
+                  { name: 'Times', value: `${time1?.nome || 'Azul'} vs ${time2?.nome || 'Vermelho'}`, inline: true }
                   ).setColor(0x5865F2).setThumbnail('attachment://lollogo.png').setImage('attachment://background.png')
-                  await ch.send({ embeds: [embed], files: brandAssets() })
+                  await sendTemporaryChannelMessage(ch, { embeds: [embed], files: brandAssets() }, 60*1000)
                 }
               } catch {}
             }
@@ -1407,9 +1419,7 @@ async function sendFinalResult(doc) {
     link = base.includes('?') ? `${base}&matchId=${doc.id}` : `${base}?matchId=${doc.id}`
   }
   if (link) embed.setFooter({ text: `Histórico: ${link}` })
-  if (channel) {
-    await channel.send({ embeds: [embed] })
-  }
+  if (channel) { await sendTemporaryChannelMessage(channel, { embeds: [embed] }, 60*1000) }
   metrics.resultsAnnounced++
 
   const winnerStr = String(winner||'').trim().toLowerCase()
@@ -1454,7 +1464,7 @@ async function sendFinalResult(doc) {
           )
         if (mvpTxt) embed.setFooter({ text: '🏆 MVP desta partida' })
         const row = link ? new ActionRowBuilder().addComponents(new ButtonBuilder().setLabel('Ver Histórico').setStyle(ButtonStyle.Link).setURL(link)) : null
-        await user.send({ embeds: [embed], components: row ? [row] : [] })
+        await sendTemporaryDmMessage(discordId, { embeds: [embed], components: row ? [row] : [] }, 60*1000)
       } catch {}
     }
   }
@@ -1530,13 +1540,29 @@ function setupMatchListeners() {
                   { name: 'Time Azul', value: formatPlayersResult(blue, '', true, gid) || '-', inline: true },
                   { name: 'Time Vermelho', value: formatPlayersResult(red, '', true, gid) || '-', inline: true }
                 )
-                await ch.send({ embeds: [embed] })
+                const sent = await ch.send({ embeds: [embed] })
+                try { await doc.ref.set({ ongoingMessageId: sent.id, ongoingChannelId: ch.id }, { merge: true }) } catch {}
                 await markAnnounced('ongoing', doc.id)
               } catch {}
             }
-          } else {
-            sendFinalResult(doc)
-          }
+          } else { sendFinalResult(doc) }
+        })()
+      }
+      // Remover mensagem de "Partida em andamento" quando finalizada/cancelada ou removida
+      const st = String(data.status||'').toLowerCase()
+      const shouldRemoveOngoing = hasWinner || (st && st !== 'pending')
+      if ((change.type === 'modified' && shouldRemoveOngoing) || change.type === 'removed') {
+        (async () => {
+          try {
+            const chid = data.ongoingChannelId
+            const mid = data.ongoingMessageId
+            if (chid && mid) {
+              const ch = await client.channels.fetch(chid).catch(()=>null)
+              const msg = ch ? await ch.messages.fetch(mid).catch(()=>null) : null
+              if (msg && msg.deletable) await msg.delete().catch(()=>{})
+              await doc.ref.set({ ongoingMessageId: admin.firestore.FieldValue.delete(), ongoingChannelId: admin.firestore.FieldValue.delete() }, { merge: true })
+            }
+          } catch {}
         })()
       }
       const hasMvp = !!(data.mvpResult && (data.mvpResult.time1 || data.mvpResult.time2))
