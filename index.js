@@ -835,7 +835,7 @@ function formatPlayers(list) {
 }
 
 // Formata jogadores como: Nome#TAG • Elo Divisão (Role) [• MVP]
-function formatPlayersResult(list, mvpName) {
+function formatPlayersResult(list, mvpName, preferMention = false) {
   if (!Array.isArray(list)) return '-'
   const mvp = String(mvpName || '').trim().toLowerCase()
   return list
@@ -851,7 +851,7 @@ function formatPlayersResult(list, mvpName) {
       const isMvp = nome && nome.toLowerCase() === mvp
       const mvpBadge = isMvp ? ' • MVP' : ''
       const laneText = lane ? ` (${lane})` : ''
-      const left = mention || handle
+      const left = preferMention && mention ? mention : handle
       return `${left} • ${elo} ${div}${laneText}${mvpBadge}`
     })
     .join('\n')
@@ -1011,7 +1011,7 @@ async function sendReadyCheckNotifications(doc) {
     if (!id) continue
     try {
       const user = await client.users.fetch(id)
-      const details = formatPlayersResult(players, '')
+      const details = formatPlayersResult(players, '', false)
       const until = data.timestampFim && data.timestampFim.toDate ? data.timestampFim.toDate() : null
       const now = new Date()
       const msLeft = until ? Math.max(0, until.getTime() - now.getTime()) : 2 * 60 * 1000
@@ -1046,7 +1046,7 @@ async function sendReadyCheckNotifications(doc) {
         }
         players.push({ ...(typeof p === 'object' ? p : { nome: String(p||'') }), discordUserId: id || null })
       }
-      const details = formatPlayersResult(players, '')
+      const details = formatPlayersResult(players, '', true)
       const until = data.timestampFim && data.timestampFim.toDate ? data.timestampFim.toDate() : null
       const now = new Date()
       const msLeft = until ? Math.max(0, until.getTime() - now.getTime()) : 2 * 60 * 1000
@@ -1185,11 +1185,12 @@ function setupMatchListeners() {
       const vencedor = typeof vRaw === 'string' ? vRaw.trim() : ''
       const vNorm = vencedor.toLowerCase()
       const hasWinner = !!vencedor && vNorm !== 'n/a' && vNorm !== 'pendente'
-      if (change.type === 'added' || change.type === 'modified') {
+      if (change.type === 'added') {
         (async () => {
           const createdMs = docCreatedMs(data)
           if (!createdMs || createdMs < startOfYesterdayMs()) return
           if (!hasWinner) {
+            if (await hasAnnounced('ongoing', doc.id)) return
             const teams = data.teams || { blue: data.timeAzul || data.teamBlue || data.time1, red: data.timeVermelho || data.teamRed || data.time2 }
             const blue = teams?.blue?.jogadores || teams?.team1?.jogadores || teams?.blue || []
             const red = teams?.red?.jogadores || teams?.team2?.jogadores || teams?.red || []
@@ -1198,7 +1199,7 @@ function setupMatchListeners() {
               { name: 'Time Vermelho', value: formatPlayersResult(red, '') || '-', inline: true }
             )
             const ch = await getOngoingChannel()
-            if (ch) { try { await ch.send({ embeds: [embed] }) } catch {} }
+            if (ch) { try { await ch.send({ embeds: [embed] }) ; await markAnnounced('ongoing', doc.id) } catch {} }
           } else {
             sendFinalResult(doc)
           }
