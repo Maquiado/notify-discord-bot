@@ -787,6 +787,11 @@ client.on('interactionCreate', async (interaction) => {
         try { const userObj = await client.users.fetch(userId); await userObj.send({ embeds: [embed], files }) } catch {}
         try { await interaction.reply({ content: 'Confirmação enviada no seu DM.', ephemeral: true }); setTimeout(()=>{ interaction.deleteReply().catch(()=>{}) }, 8000) } catch {}
         try { if (interaction.message && interaction.message.deletable) await interaction.message.delete().catch(()=>{}) } catch {}
+        try {
+          const d = msnap.data() || {}
+          const dmId = d.dmMessageIds && d.dmMessageIds[userId]
+          if (dmId) { const u = await client.users.fetch(userId); const dm = await u.createDM(); const m = await dm.messages.fetch(dmId).catch(()=>null); if (m && m.deletable) await m.delete().catch(()=>{}) }
+        } catch {}
         try { await deleteReadyPrompt(matchId) } catch {}
       } else if (action === 'decline') {
         await mref.update({ [`playersReady.${userId}`]: false })
@@ -808,6 +813,11 @@ client.on('interactionCreate', async (interaction) => {
         try { const userObj = await client.users.fetch(userId); await userObj.send({ embeds: [embed], files }) } catch {}
         try { await interaction.reply({ content: 'Confirmação enviada no seu DM.', ephemeral: true }); setTimeout(()=>{ interaction.deleteReply().catch(()=>{}) }, 8000) } catch {}
         try { if (interaction.message && interaction.message.deletable) await interaction.message.delete().catch(()=>{}) } catch {}
+        try {
+          const d = msnap.data() || {}
+          const dmId = d.dmMessageIds && d.dmMessageIds[userId]
+          if (dmId) { const u = await client.users.fetch(userId); const dm = await u.createDM(); const m = await dm.messages.fetch(dmId).catch(()=>null); if (m && m.deletable) await m.delete().catch(()=>{}) }
+        } catch {}
         try { await deleteReadyPrompt(matchId) } catch {}
       }
   }
@@ -1089,8 +1099,8 @@ async function sendReadyCheckNotifications(doc) {
       const details = formatPlayersResult(enriched, '', false)
       const until = data.timestampFim && data.timestampFim.toDate ? data.timestampFim.toDate() : null
       const now = new Date()
-      const msLeft = until ? Math.max(0, until.getTime() - now.getTime()) : 1 * 60 * 1000
-      const minLeft = Math.ceil(msLeft / 60000)
+      const msLeft = until ? Math.max(0, until.getTime() - now.getTime()) : 30 * 1000
+      const secLeft = Math.ceil(msLeft / 1000)
       const rowForUser = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(`accept:${doc.id}:${id}`).setLabel('Aceitar Partida').setStyle(ButtonStyle.Success),
         new ButtonBuilder().setCustomId(`decline:${doc.id}:${id}`).setLabel('Recusar Partida').setStyle(ButtonStyle.Danger)
@@ -1098,11 +1108,12 @@ async function sendReadyCheckNotifications(doc) {
       const embed = new EmbedBuilder()
         .setTitle('Partida encontrada — Fila aberta!')
         .setColor(0x9B59B6)
-        .setDescription(`O prazo para aceitar a fila termina em ${minLeft} minuto(s).\n${joinBase(siteBase, 'queue.html')}`)
+        .setDescription(`O prazo para aceitar a fila termina em ${secLeft} segundo(s).\n${joinBase(siteBase, 'queue.html')}`)
         .addFields({ name: 'Jogadores', value: details || '-' })
         .setThumbnail('attachment://lollogo.png')
         .setImage('attachment://background.png')
-      await user.send({ embeds: [embed], components: [rowForUser], files: brandAssets() })
+      const sent = await user.send({ embeds: [embed], components: [rowForUser], files: brandAssets() })
+      try { await doc.ref.set({ [`dmMessageIds.${id}`]: sent.id }, { merge: true }) } catch {}
       metrics.dmsSent++
     } catch (e) { metrics.dmsFailed++ }
   }
@@ -1129,12 +1140,12 @@ async function sendReadyCheckNotifications(doc) {
       const details = formatPlayersResult(players, '', true, targetChannel.guild?.id)
       const until = data.timestampFim && data.timestampFim.toDate ? data.timestampFim.toDate() : null
       const now = new Date()
-      const msLeft = until ? Math.max(0, until.getTime() - now.getTime()) : 1 * 60 * 1000
-      const minLeft = Math.ceil(msLeft / 60000)
+      const msLeft = until ? Math.max(0, until.getTime() - now.getTime()) : 30 * 1000
+      const secLeft = Math.ceil(msLeft / 1000)
       const embed = new EmbedBuilder()
         .setTitle('Partida encontrada — Fila aberta!')
         .setColor(0x9B59B6)
-        .setDescription(`O prazo para aceitar a fila termina em ${minLeft} minuto(s).`)
+        .setDescription(`O prazo para aceitar a fila termina em ${secLeft} segundo(s).`)
         .addFields({ name: 'Jogadores', value: details || '-' })
         .setThumbnail('attachment://lollogo.png')
         .setImage('attachment://background.png')
@@ -1149,6 +1160,10 @@ async function sendReadyCheckNotifications(doc) {
       console.error('Falha ao enviar mensagem de canal:', e?.message || e)
     }
   }
+  try {
+    const untilTs = data.timestampFim && data.timestampFim.toMillis ? data.timestampFim.toMillis() : (Date.now() + 30*1000)
+    scheduleReadyTimeout(doc.id, untilTs)
+  } catch {}
   await markAnnounced('ready', doc.id)
 }
 
@@ -1163,6 +1178,38 @@ async function deleteReadyPrompt(matchId) {
     if (chid && mid) {
       try { const ch = await client.channels.fetch(chid).catch(()=>null); const msg = ch ? await ch.messages.fetch(mid).catch(()=>null) : null; if (msg && msg.deletable) await msg.delete().catch(()=>{}) } catch {}
     }
+  } catch {}
+}
+
+const readyTimeouts = new Map()
+function scheduleReadyTimeout(matchId, expireMs) {
+  try {
+    const delay = Math.max(0, expireMs - Date.now())
+    if (readyTimeouts.has(matchId)) { clearTimeout(readyTimeouts.get(matchId)) }
+    const to = setTimeout(async () => {
+      try {
+        const ref = db.collection('aguardandoPartidas').doc(matchId)
+        const snap = await ref.get()
+        if (!snap.exists) return
+        const d = snap.data() || {}
+        if (d.status && d.status !== 'readyCheck') return
+        // delete channel prompt
+        try { await deleteReadyPrompt(matchId) } catch {}
+        // delete DM prompts and notify timeout
+        const dmMap = d.dmMessageIds || {}
+        for (const [discordId, msgId] of Object.entries(dmMap)) {
+          try {
+            const user = await client.users.fetch(discordId)
+            const dm = await user.createDM()
+            const msg = await dm.messages.fetch(msgId).catch(()=>null)
+            if (msg && msg.deletable) await msg.delete().catch(()=>{})
+            await user.send({ content: 'Ready Check expirou (Timeout 30s).' })
+          } catch {}
+        }
+        await ref.set({ status: 'timeout', timeoutAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true })
+      } catch {}
+    }, delay)
+    readyTimeouts.set(matchId, to)
   } catch {}
 }
 
