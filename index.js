@@ -516,26 +516,36 @@ client.on('interactionCreate', async (interaction) => {
         if (!channelOk) { await interaction.reply({ content: 'Use este comando no canal de Resultados.', ephemeral: true }); return }
         const matchId = interaction.options.getString('match_id')
         const att = interaction.options.getAttachment('imagem')
-        if (!matchId) { await interaction.reply({ content: 'Informe o match_id.', ephemeral: true }); return }
-        if (!att || !att.url) { await interaction.reply({ content: 'Anexe o print da partida (imagem).', ephemeral: true }); return }
+        console.log('[resultado]', new Date().toISOString(), 'start', { userId: interaction.user.id, channelId: interaction.channelId, matchId })
+        await interaction.deferReply({ ephemeral: true })
+        console.log('[resultado]', new Date().toISOString(), 'deferred')
+        if (!matchId) { await interaction.editReply({ content: 'Informe o match_id.' }); return }
+        if (!att || !att.url) { await interaction.editReply({ content: 'Anexe o print da partida (imagem).' }); return }
         try {
           const ref = db.collection('historicoPartidas').doc(matchId)
           const snap = await ref.get()
-          if (!snap.exists) { await interaction.reply({ content: 'Partida não encontrada.', ephemeral: true }); return }
+          console.log('[resultado]', new Date().toISOString(), 'historico fetch', { exists: snap.exists })
+          if (!snap.exists) { await interaction.editReply({ content: 'Partida não encontrada.' }); return }
           const d0 = snap.data() || {}
-          if (d0.vencedor && d0.vencedor !== 'N/A') { await interaction.reply({ content: `Partida já possui vencedor (${d0.vencedor}). Use /corrigirresultado para alterar.`, ephemeral: true }); return }
+          if (d0.vencedor && d0.vencedor !== 'N/A') { console.log('[resultado]', new Date().toISOString(), 'already has winner', { vencedor: d0.vencedor }); await interaction.editReply({ content: `Partida já possui vencedor (${d0.vencedor}). Use /corrigirresultado para alterar.` }); return }
+          console.log('[resultado]', new Date().toISOString(), 'team names start')
           const teams = await getMatchTeamNames(matchId)
+          console.log('[resultado]', new Date().toISOString(), 'ocr start')
+          const ocrT0 = Date.now()
           const text = await ocrTextFromUrl(att.url)
+          console.log('[resultado]', new Date().toISOString(), 'ocr done', { ms: Date.now()-ocrT0, textLen: String(text||'').length })
           const textNorm = normalizeText(text)
           let matched = []
           for (const n of teams.t1.concat(teams.t2)) { const nn = normalizeName(n); if (nn && nn.length >= 3 && textNorm.includes(nn)) matched.push(n) }
           const uniqueMatched = Array.from(new Set(matched))
+          console.log('[resultado]', new Date().toISOString(), 'players matched', { count: uniqueMatched.length })
           if (uniqueMatched.length < 6) {
-            await interaction.reply({ content: `Não foi possível validar o print: apenas ${uniqueMatched.length} jogador(es) conferem com a partida. É necessário coincidir pelo menos 6.`, ephemeral: true })
+            await interaction.editReply({ content: `Não foi possível validar o print: apenas ${uniqueMatched.length} jogador(es) conferem com a partida. É necessário coincidir pelo menos 6.` })
             return
           }
           const winnerSide = detectWinnerFromText(text, teams.t1, teams.t2)
-          if (!winnerSide) { await interaction.reply({ content: 'Não foi possível detectar VITÓRIA/DERROTA ou vincular ao lado. Envie um print da tela de fim de jogo com "VITÓRIA/DERROTA" visível.', ephemeral: true }); return }
+          console.log('[resultado]', new Date().toISOString(), 'winner detection', { winnerSide })
+          if (!winnerSide) { await interaction.editReply({ content: 'Não foi possível detectar VITÓRIA/DERROTA ou vincular ao lado. Envie um print da tela de fim de jogo com "VITÓRIA/DERROTA" visível.' }); return }
           const vencedor = winnerSide === 'time1' ? teams.time1Name : teams.time2Name
           const payload = {
             vencedor,
@@ -547,28 +557,34 @@ client.on('interactionCreate', async (interaction) => {
           payload.verificadoPorOcr = true
           payload.jogadoresValidados = uniqueMatched.slice(0, 10)
           payload.qtdJogadoresValidados = uniqueMatched.length
+          console.log('[resultado]', new Date().toISOString(), 'firestore set start')
+          const setT0 = Date.now()
           await ref.set(payload, { merge: true })
-          await interaction.reply({ content: `Resultado registrado: ${vencedor} (match_id: ${matchId}).`, ephemeral: true })
-        try {
-          const teamsMentions = await formatTeamsMentionsFromHistorico(matchId)
-          const pub = new EmbedBuilder()
-            .setTitle('Resultado de Partida')
-            .addFields(
-              { name: 'match_id', value: `${matchId}`, inline: true },
-              { name: 'Vencedor', value: `${vencedor}`, inline: true },
-              { name: 'Validados', value: `${uniqueMatched.length} jogadores`, inline: true }
-            )
-            .addFields(
-              { name: 'Time Azul', value: teamsMentions.blueStr || '-', inline: true },
-              { name: 'Time Vermelho', value: teamsMentions.redStr || '-', inline: true }
-            )
-            .setImage(att.url)
-            .setColor(0x57F287)
-            .setThumbnail('attachment://lollogo.png')
-          await interaction.channel.send({ embeds: [pub], files: brandAssets() })
-        } catch {}
+          console.log('[resultado]', new Date().toISOString(), 'firestore set done', { ms: Date.now()-setT0 })
+          await interaction.editReply({ content: `Resultado registrado: ${vencedor} (match_id: ${matchId}).` })
+          console.log('[resultado]', new Date().toISOString(), 'reply edited')
+          try {
+            const teamsMentions = await formatTeamsMentionsFromHistorico(matchId)
+            const pub = new EmbedBuilder()
+              .setTitle('Resultado de Partida')
+              .addFields(
+                { name: 'match_id', value: `${matchId}`, inline: true },
+                { name: 'Vencedor', value: `${vencedor}`, inline: true },
+                { name: 'Validados', value: `${uniqueMatched.length} jogadores`, inline: true }
+              )
+              .addFields(
+                { name: 'Time Azul', value: teamsMentions.blueStr || '-', inline: true },
+                { name: 'Time Vermelho', value: teamsMentions.redStr || '-', inline: true }
+              )
+              .setImage(att.url)
+              .setColor(0x57F287)
+              .setThumbnail('attachment://lollogo.png')
+            await interaction.channel.send({ embeds: [pub], files: brandAssets() })
+            console.log('[resultado]', new Date().toISOString(), 'public embed sent')
+          } catch {}
         } catch (e) {
-          await interaction.reply({ content: 'Falha ao registrar resultado.', ephemeral: true })
+          console.error('[resultado]', new Date().toISOString(), 'error', e && e.stack ? e.stack : e)
+          await interaction.editReply({ content: 'Falha ao registrar resultado.' })
         }
       }
       if (interaction.commandName === 'corrigirresultado') {
@@ -578,19 +594,27 @@ client.on('interactionCreate', async (interaction) => {
         const vencedorOpt = interaction.options.getString('vencedor')
         const motivo = interaction.options.getString('motivo') || ''
         const att = interaction.options.getAttachment('imagem')
-        if (!matchId || !vencedorOpt) { await interaction.reply({ content: 'Parâmetros inválidos.', ephemeral: true }); return }
-        if (!att || !att.url) { await interaction.reply({ content: 'Anexe o print da partida (imagem).', ephemeral: true }); return }
+        console.log('[corrigirresultado]', new Date().toISOString(), 'start', { userId: interaction.user.id, channelId: interaction.channelId, matchId, vencedorOpt, motivoLen: String(motivo||'').length })
+        await interaction.deferReply({ ephemeral: true })
+        console.log('[corrigirresultado]', new Date().toISOString(), 'deferred')
+        if (!matchId || !vencedorOpt) { await interaction.editReply({ content: 'Parâmetros inválidos.' }); return }
+        if (!att || !att.url) { await interaction.editReply({ content: 'Anexe o print da partida (imagem).' }); return }
         try {
           const ref = db.collection('historicoPartidas').doc(matchId)
           const snap = await ref.get()
-          if (!snap.exists) { await interaction.reply({ content: 'Partida não encontrada.', ephemeral: true }); return }
+          console.log('[corrigirresultado]', new Date().toISOString(), 'historico fetch', { exists: snap.exists })
+          if (!snap.exists) { await interaction.editReply({ content: 'Partida não encontrada.' }); return }
           const teams = await getMatchTeamNames(matchId)
+          console.log('[corrigirresultado]', new Date().toISOString(), 'ocr start')
+          const ocrT0 = Date.now()
           const text = await ocrTextFromUrl(att.url)
+          console.log('[corrigirresultado]', new Date().toISOString(), 'ocr done', { ms: Date.now()-ocrT0, textLen: String(text||'').length })
           const textNorm = normalizeText(text)
           let matched = []
           for (const n of teams.t1.concat(teams.t2)) { const nn = normalizeName(n); if (nn && nn.length >= 3 && textNorm.includes(nn)) matched.push(n) }
           const uniqueMatched = Array.from(new Set(matched))
-          if (uniqueMatched.length < 6) { await interaction.reply({ content: `Não foi possível validar o print: apenas ${uniqueMatched.length} jogador(es) conferem com a partida. É necessário coincidir pelo menos 6.`, ephemeral: true }); return }
+          console.log('[corrigirresultado]', new Date().toISOString(), 'players matched', { count: uniqueMatched.length })
+          if (uniqueMatched.length < 6) { await interaction.editReply({ content: `Não foi possível validar o print: apenas ${uniqueMatched.length} jogador(es) conferem com a partida. É necessário coincidir pelo menos 6.` }); return }
           const vencedor = vencedorOpt === 'azul' ? teams.time1Name : teams.time2Name
           const payload = {
             vencedor,
@@ -604,28 +628,34 @@ client.on('interactionCreate', async (interaction) => {
           payload.verificadoPorOcr = true
           payload.jogadoresValidados = uniqueMatched.slice(0, 10)
           payload.qtdJogadoresValidados = uniqueMatched.length
+          console.log('[corrigirresultado]', new Date().toISOString(), 'firestore set start')
+          const setT0 = Date.now()
           await ref.set(payload, { merge: true })
-          await interaction.reply({ content: `Resultado corrigido para ${vencedor} (match_id: ${matchId}).`, ephemeral: true })
-        try {
-          const pub = new EmbedBuilder()
-            .setTitle('Correção de Resultado')
-            .addFields(
-              { name: 'match_id', value: `${matchId}`, inline: true },
-              { name: 'Vencedor', value: `${vencedor}`, inline: true },
-              { name: 'Motivo', value: motivo || '—', inline: true },
-              { name: 'Validados', value: `${uniqueMatched.length} jogadores`, inline: true }
-            )
-            .addFields(
-              { name: 'Time Azul', value: (await formatTeamsMentionsFromHistorico(matchId)).blueStr || '-', inline: true },
-              { name: 'Time Vermelho', value: (await formatTeamsMentionsFromHistorico(matchId)).redStr || '-', inline: true }
-            )
-            .setImage(att.url)
-            .setColor(0xFEE75C)
-            .setThumbnail('attachment://lollogo.png')
-          await interaction.channel.send({ embeds: [pub], files: brandAssets() })
-        } catch {}
+          console.log('[corrigirresultado]', new Date().toISOString(), 'firestore set done', { ms: Date.now()-setT0 })
+          await interaction.editReply({ content: `Resultado corrigido para ${vencedor} (match_id: ${matchId}).` })
+          console.log('[corrigirresultado]', new Date().toISOString(), 'reply edited')
+          try {
+            const pub = new EmbedBuilder()
+              .setTitle('Correção de Resultado')
+              .addFields(
+                { name: 'match_id', value: `${matchId}`, inline: true },
+                { name: 'Vencedor', value: `${vencedor}`, inline: true },
+                { name: 'Motivo', value: motivo || '—', inline: true },
+                { name: 'Validados', value: `${uniqueMatched.length} jogadores`, inline: true }
+              )
+              .addFields(
+                { name: 'Time Azul', value: (await formatTeamsMentionsFromHistorico(matchId)).blueStr || '-', inline: true },
+                { name: 'Time Vermelho', value: (await formatTeamsMentionsFromHistorico(matchId)).redStr || '-', inline: true }
+              )
+              .setImage(att.url)
+              .setColor(0xFEE75C)
+              .setThumbnail('attachment://lollogo.png')
+            await interaction.channel.send({ embeds: [pub], files: brandAssets() })
+            console.log('[corrigirresultado]', new Date().toISOString(), 'public embed sent')
+          } catch {}
         } catch (e) {
-          await interaction.reply({ content: 'Falha ao corrigir resultado.', ephemeral: true })
+          console.error('[corrigirresultado]', new Date().toISOString(), 'error', e && e.stack ? e.stack : e)
+          await interaction.editReply({ content: 'Falha ao corrigir resultado.' })
         }
       }
       
