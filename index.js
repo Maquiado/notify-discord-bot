@@ -1346,12 +1346,19 @@ function setupMatchListeners() {
             const teams = data.teams || { blue: data.timeAzul || data.teamBlue || data.time1, red: data.timeVermelho || data.teamRed || data.time2 }
             const blue = teams?.blue?.jogadores || teams?.team1?.jogadores || teams?.blue || []
             const red = teams?.red?.jogadores || teams?.team2?.jogadores || teams?.red || []
-            const embed = new EmbedBuilder().setTitle('Partida em andamento').addFields(
-              { name: 'Time Azul', value: formatPlayersResult(blue, '') || '-', inline: true },
-              { name: 'Time Vermelho', value: formatPlayersResult(red, '') || '-', inline: true }
-            )
-            const ch = await getOngoingChannel()
-            if (ch) { try { await ch.send({ embeds: [embed] }) ; await markAnnounced('ongoing', doc.id) } catch {} }
+            const ch = await getQueueChannel()
+            if (ch) {
+              try {
+                await ensureGuildEmojisForChannel(ch)
+                const gid = ch.guild?.id
+                const embed = new EmbedBuilder().setTitle('Partida em andamento').addFields(
+                  { name: 'Time Azul', value: formatPlayersResult(blue, '', true, gid) || '-', inline: true },
+                  { name: 'Time Vermelho', value: formatPlayersResult(red, '', true, gid) || '-', inline: true }
+                )
+                await ch.send({ embeds: [embed] })
+                await markAnnounced('ongoing', doc.id)
+              } catch {}
+            }
           } else {
             sendFinalResult(doc)
           }
