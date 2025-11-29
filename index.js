@@ -1255,7 +1255,8 @@ function scheduleReadyTimeout(matchId, expireMs) {
         const snap = await ref.get()
         if (!snap.exists) return
         const d = snap.data() || {}
-        if (d.status && d.status !== 'readyCheck') return
+        const st = d.status || 'readyCheck'
+        if (!['readyCheck','pending'].includes(st)) return
         // delete channel prompt
         try { await deleteReadyPrompt(matchId) } catch {}
         // delete DM prompts and notify timeout
