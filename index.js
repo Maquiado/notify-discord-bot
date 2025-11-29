@@ -726,7 +726,12 @@ client.on('interactionCreate', async (interaction) => {
         const af = actionAsset('accept')
         const files = brandAssets()
         if (af) files.push(af)
-        const embed = new EmbedBuilder().setTitle('Aceitar').setDescription('Você aceitou a partida.').setColor(0x57F287).setThumbnail('attachment://lollogo.png')
+        const udataSnap = uid ? await userDoc(uid).get() : null
+        const udata = udataSnap && udataSnap.exists ? udataSnap.data() : {}
+        const tagA = String(udata.tag||'').trim().replace(/^#/,'')
+        const handleA = tagA ? `${udata.playerName||udata.nome||interaction.user.username}#${tagA}` : (udata.playerName||udata.nome||interaction.user.username)
+        const descA = ['Você aceitou a partida.', `Jogador: ${handleA}`, `Menção: <@${userId}>`].join('\n')
+        const embed = new EmbedBuilder().setTitle('Aceitar').setDescription(descA).setColor(0x57F287).setThumbnail('attachment://lollogo.png')
         if (af) embed.setImage('attachment://aceitar.png')
         await interaction.reply({ embeds: [embed], files, ephemeral: true })
         try { if (interaction.message && interaction.message.deletable) await interaction.message.delete().catch(()=>{}) } catch {}
@@ -741,7 +746,12 @@ client.on('interactionCreate', async (interaction) => {
         const af = actionAsset('decline')
         const files = brandAssets()
         if (af) files.push(af)
-        const embed = new EmbedBuilder().setTitle('Recusar').setDescription('Você recusou a partida.').setColor(0xED4245).setThumbnail('attachment://lollogo.png')
+        const udataSnap2 = uid ? await userDoc(uid).get() : null
+        const udata2 = udataSnap2 && udataSnap2.exists ? udataSnap2.data() : {}
+        const tagD = String(udata2.tag||'').trim().replace(/^#/,'')
+        const handleD = tagD ? `${udata2.playerName||udata2.nome||interaction.user.username}#${tagD}` : (udata2.playerName||udata2.nome||interaction.user.username)
+        const descD = ['Você recusou a partida.', `Jogador: ${handleD}`, `Menção: <@${userId}>`].join('\n')
+        const embed = new EmbedBuilder().setTitle('Recusar').setDescription(descD).setColor(0xED4245).setThumbnail('attachment://lollogo.png')
         if (af) embed.setImage('attachment://recusar.png')
         await interaction.reply({ embeds: [embed], files, ephemeral: true })
         try { if (interaction.message && interaction.message.deletable) await interaction.message.delete().catch(()=>{}) } catch {}
@@ -1062,7 +1072,8 @@ async function sendReadyCheckNotifications(doc) {
         new ButtonBuilder().setCustomId(`accept:${doc.id}`).setLabel('Aceitar').setStyle(ButtonStyle.Success),
         new ButtonBuilder().setCustomId(`decline:${doc.id}`).setLabel('Recusar').setStyle(ButtonStyle.Danger)
       )
-      await targetChannel.send({ embeds: [embed], components: [row], files: brandAssets() })
+      const sent = await targetChannel.send({ embeds: [embed], components: [row], files: brandAssets() })
+      try { await doc.ref.set({ readyMessageId: sent.id, readyChannelId: targetChannel.id }, { merge: true }) } catch {}
       metrics.channelAnnouncements++
     } catch (e) {
       console.error('Falha ao enviar mensagem de canal:', e?.message || e)
@@ -1170,6 +1181,15 @@ function setupMatchListeners() {
         if (createdMs >= startOfYesterdayMs() && nowMs - createdMs <= windowMs) {
           sendReadyCheckNotifications(doc)
         }
+      }
+      if ((change.type === 'modified' || change.type === 'added') && data.status && data.status !== 'readyCheck') {
+        (async () => {
+          const mid = data.readyMessageId
+          const chid = data.readyChannelId
+          if (mid && chid) {
+            try { const ch = await client.channels.fetch(chid).catch(()=>null); const msg = ch ? await ch.messages.fetch(mid).catch(()=>null) : null; if (msg && msg.deletable) await msg.delete().catch(()=>{}) } catch {}
+          }
+        })()
       }
       if ((change.type === 'modified' || change.type === 'added') && data.vencedor) {
         sendFinalResult(doc)
