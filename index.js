@@ -52,6 +52,8 @@ if (!token) {
   process.exit(1)
 }
 
+const RESULTS_CHANNEL_ID = process.env.DISCORD_RESULTS_CHANNEL_ID || '1444182835975028848'
+
 const commands = [
   new SlashCommandBuilder().setName('fila').setDescription('Entrar/sair da fila'),
   new SlashCommandBuilder().setName('perfil').setDescription('Visualizar seu perfil básico'),
@@ -60,13 +62,112 @@ const commands = [
   new SlashCommandBuilder().setName('linkuid').setDescription('Vincular seu Discord ao UID do site').addStringOption((o)=>o.setName('uid').setDescription('Seu UID do site').setRequired(true)),
   new SlashCommandBuilder().setName('linkcode').setDescription('Gerar código para vincular pelo site'),
   new SlashCommandBuilder()
+    .setName('resultado')
+    .setDescription('Registrar resultado de partida (detecta pelo print)')
+    .addStringOption((o)=> o.setName('match_id').setDescription('ID da partida (historicoPartidas)').setRequired(true))
+    .addAttachmentOption((o)=> o.setName('imagem').setDescription('Print da partida').setRequired(true)),
+  new SlashCommandBuilder()
+    .setName('corrigirresultado')
+    .setDescription('Corrigir resultado da partida')
+    .addStringOption((o)=> o.setName('match_id').setDescription('ID da partida (historicoPartidas)').setRequired(true))
+    .addStringOption((o)=> o.setName('vencedor').setDescription('Lado vencedor').setRequired(true)
+      .addChoices(
+        { name: 'Time Azul', value: 'azul' },
+        { name: 'Time Vermelho', value: 'vermelho' }
+      ))
+    .addAttachmentOption((o)=> o.setName('imagem').setDescription('Print da partida').setRequired(true))
+    .addStringOption((o)=> o.setName('motivo').setDescription('Motivo da correção').setRequired(false)),
+  new SlashCommandBuilder()
     .setName('cleanupready')
     .setDescription('Apagar Ready Checks antigos ou todos')
     .addIntegerOption((o) => o.setName('age').setDescription('Idade mínima em minutos').setRequired(false))
     .addBooleanOption((o) => o.setName('all').setDescription('Apagar todos os Ready Checks').setRequired(false)),
   new SlashCommandBuilder().setName('readylist').setDescription('Listar Ready Checks ativos'),
-  new SlashCommandBuilder().setName('clearqueue').setDescription('Remover sua entrada da fila')
+  new SlashCommandBuilder().setName('clearqueue').setDescription('Remover sua entrada da fila'),
+  new SlashCommandBuilder().setName('maketestmatch').setDescription('Criar partida de teste e retornar match_id'),
 ].map((c) => c.toJSON())
+
+const Tesseract = require('tesseract.js')
+
+function normalizeText(s) {
+  return String(s||'')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g,'')
+    .replace(/[^a-z0-9#\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function normalizeName(s){
+  return String(s||'')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g,'')
+    .replace(/\s+/g, '')
+    .trim()
+}
+
+async function ocrTextFromUrl(url) {
+  try {
+    const res = await Tesseract.recognize(url, 'eng', { logger: null })
+    return res && res.data && res.data.text ? res.data.text : ''
+  } catch { return '' }
+}
+
+async function getMatchPlayerNames(matchId){
+  try {
+    const ref = db.collection('historicoPartidas').doc(matchId)
+    const snap = await ref.get()
+    if (!snap.exists) return []
+    const d = snap.data() || {}
+    const t1 = (d.time1 && d.time1.jogadores) ? d.time1.jogadores : []
+    const t2 = (d.time2 && d.time2.jogadores) ? d.time2.jogadores : []
+    const names = []
+    t1.forEach(j => { if (j && j.nome) names.push(String(j.nome)) })
+    t2.forEach(j => { if (j && j.nome) names.push(String(j.nome)) })
+    return names
+  } catch { return [] }
+}
+
+async function getMatchTeamNames(matchId){
+  try {
+    const ref = db.collection('historicoPartidas').doc(matchId)
+    const snap = await ref.get()
+    if (!snap.exists) return { t1: [], t2: [], time1Name: 'Time Azul', time2Name: 'Time Vermelho' }
+    const d = snap.data() || {}
+    const t1 = (d.time1 && d.time1.jogadores) ? d.time1.jogadores : []
+    const t2 = (d.time2 && d.time2.jogadores) ? d.time2.jogadores : []
+    return {
+      t1: t1.map(j => String(j.nome||'')),
+      t2: t2.map(j => String(j.nome||'')),
+      time1Name: d.time1?.nome || 'Time Azul',
+      time2Name: d.time2?.nome || 'Time Vermelho'
+    }
+  } catch { return { t1: [], t2: [], time1Name: 'Time Azul', time2Name: 'Time Vermelho' } }
+}
+
+function detectWinnerFromText(text, team1Names, team2Names){
+  const norm = normalizeText(text)
+  const hasVitoria = norm.includes('vitoria')
+  const hasDerrota = norm.includes('derrota')
+  if (!hasVitoria && !hasDerrota) return null
+  const i1 = norm.indexOf('equipe 1')
+  const i2 = norm.indexOf('equipe 2')
+  const slice1 = i1 >= 0 ? norm.slice(i1, i1 + 800) : norm
+  const slice2 = i2 >= 0 ? norm.slice(i2, i2 + 800) : norm
+  function countMatches(slice, names){
+    let c = 0
+    for (const n of names) { const nn = normalizeName(n); if (nn && nn.length >= 3 && slice.includes(nn)) c++ }
+    return c
+  }
+  const c1 = countMatches(slice1, team1Names)
+  const c2 = countMatches(slice2, team2Names)
+  if (c1 === 0 && c2 === 0) return null
+  if (hasVitoria) return c1 >= c2 ? 'time1' : 'time2'
+  if (hasDerrota) return c1 >= c2 ? 'time2' : 'time1'
+  return null
+}
 
 async function registerCommands() {
   const rest = new REST({ version: '10' }).setToken(token)
@@ -201,12 +302,20 @@ client.on('interactionCreate', async (interaction) => {
       if (interaction.commandName === 'linkuid') {
         const uid = interaction.options.getString('uid')
         try {
-          const usnap = await userDoc(uid).get()
-          if (!usnap.exists) { await interaction.reply({ content: 'UID não encontrado no site.', ephemeral: true }); return }
+          const ref = userDoc(uid)
+          const usnap = await ref.get()
+          if (!usnap.exists) {
+            await ref.set({
+              uid,
+              nome: interaction.user.username,
+              createdAt: admin.firestore.FieldValue.serverTimestamp(),
+              source: 'discord-autoprovision'
+            }, { merge: true })
+          }
           const discordId = interaction.user.id
           const q = await db.collection('users').where('discordUserId','==',discordId).limit(1).get()
           if (!q.empty && q.docs[0].id !== uid) { await interaction.reply({ content: 'Seu Discord já está vinculado a outro UID.', ephemeral: true }); return }
-          await userDoc(uid).set({ discordUserId: discordId, discordUsername: interaction.user.username, discordLinkedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true })
+          await ref.set({ discordUserId: discordId, discordUsername: interaction.user.username, discordLinkedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true })
           await interaction.reply({ content: 'Vínculo com o site concluído com sucesso. Deslogue da sua conta e logue novamente.', ephemeral: true })
         } catch (e) {
           await interaction.reply({ content: 'Falha ao vincular. Tente novamente mais tarde.', ephemeral: true })
@@ -280,6 +389,140 @@ client.on('interactionCreate', async (interaction) => {
         if (!uid) { await interaction.reply({ content: 'Nenhum vínculo encontrado. Use /link primeiro.', ephemeral: true }); return }
         await queueDoc(uid).delete().catch(() => {})
         await interaction.reply({ content: 'Sua entrada na fila foi removida.', ephemeral: true })
+      }
+      if (interaction.commandName === 'maketestmatch') {
+        const channelOk = String(interaction.channelId||'') === RESULTS_CHANNEL_ID
+        if (!channelOk) { await interaction.reply({ content: 'Use este comando no canal de Resultados.', ephemeral: true }); return }
+        const id = `test_${Date.now()}`
+        const ref = db.collection('historicoPartidas').doc(id)
+        const nomes1 = ['Alpha','Bravo','Charlie','Delta','Echo']
+        const nomes2 = ['Foxtrot','Golf','Hotel','India','Juliet']
+        const payload = {
+          status: 'pending',
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          time1: { nome: 'Time Azul', jogadores: nomes1.map(n=>({nome:n})) },
+          time2: { nome: 'Time Vermelho', jogadores: nomes2.map(n=>({nome:n})) }
+        }
+        try {
+          await ref.set(payload)
+          await interaction.reply({ content: `Partida de teste criada. match_id: ${id}`, ephemeral: true })
+          try {
+            const pub = new EmbedBuilder().setTitle('Partida de Teste Criada').addFields(
+              { name: 'match_id', value: id, inline: true },
+              { name: 'Time 1', value: nomes1.join(', '), inline: true },
+              { name: 'Time 2', value: nomes2.join(', '), inline: true }
+            ).setColor(0x5865F2)
+            await interaction.channel.send({ embeds: [pub] })
+          } catch {}
+        } catch (e) {
+          await interaction.reply({ content: 'Falha ao criar partida de teste.', ephemeral: true })
+        }
+      }
+      if (interaction.commandName === 'resultado') {
+        const channelOk = String(interaction.channelId||'') === RESULTS_CHANNEL_ID
+        if (!channelOk) { await interaction.reply({ content: 'Use este comando no canal de Resultados.', ephemeral: true }); return }
+        const matchId = interaction.options.getString('match_id')
+        const att = interaction.options.getAttachment('imagem')
+        if (!matchId) { await interaction.reply({ content: 'Informe o match_id.', ephemeral: true }); return }
+        if (!att || !att.url) { await interaction.reply({ content: 'Anexe o print da partida (imagem).', ephemeral: true }); return }
+        try {
+          const ref = db.collection('historicoPartidas').doc(matchId)
+          const snap = await ref.get()
+          if (!snap.exists) { await interaction.reply({ content: 'Partida não encontrada.', ephemeral: true }); return }
+          const d0 = snap.data() || {}
+          if (d0.vencedor && d0.vencedor !== 'N/A') { await interaction.reply({ content: `Partida já possui vencedor (${d0.vencedor}). Use /corrigirresultado para alterar.`, ephemeral: true }); return }
+          const teams = await getMatchTeamNames(matchId)
+          const text = await ocrTextFromUrl(att.url)
+          const textNorm = normalizeText(text)
+          let matched = []
+          for (const n of teams.t1.concat(teams.t2)) { const nn = normalizeName(n); if (nn && nn.length >= 3 && textNorm.includes(nn)) matched.push(n) }
+          const uniqueMatched = Array.from(new Set(matched))
+          if (uniqueMatched.length < 6) {
+            await interaction.reply({ content: `Não foi possível validar o print: apenas ${uniqueMatched.length} jogador(es) conferem com a partida. É necessário coincidir pelo menos 6.`, ephemeral: true })
+            return
+          }
+          const winnerSide = detectWinnerFromText(text, teams.t1, teams.t2)
+          if (!winnerSide) { await interaction.reply({ content: 'Não foi possível detectar VITÓRIA/DERROTA ou vincular ao lado. Envie um print da tela de fim de jogo com "VITÓRIA/DERROTA" visível.', ephemeral: true }); return }
+          const vencedor = winnerSide === 'time1' ? teams.time1Name : teams.time2Name
+          const payload = {
+            vencedor,
+            resultadoSource: 'discord',
+            resultadoBy: interaction.user.id,
+            resultadoAt: admin.firestore.FieldValue.serverTimestamp()
+          }
+          payload.proofUrl = att.url
+          payload.verificadoPorOcr = true
+          payload.jogadoresValidados = uniqueMatched.slice(0, 10)
+          payload.qtdJogadoresValidados = uniqueMatched.length
+          await ref.set(payload, { merge: true })
+          await interaction.reply({ content: `Resultado registrado: ${vencedor} (match_id: ${matchId}).`, ephemeral: true })
+          try {
+            const pub = new EmbedBuilder()
+              .setTitle('Resultado de Partida')
+              .addFields(
+                { name: 'match_id', value: `${matchId}`, inline: true },
+                { name: 'Vencedor', value: `${vencedor}`, inline: true },
+                { name: 'Validados', value: `${uniqueMatched.length} jogadores`, inline: true }
+              )
+              .setImage(att.url)
+              .setColor(0x57F287)
+            await interaction.channel.send({ embeds: [pub] })
+          } catch {}
+        } catch (e) {
+          await interaction.reply({ content: 'Falha ao registrar resultado.', ephemeral: true })
+        }
+      }
+      if (interaction.commandName === 'corrigirresultado') {
+        const channelOk = String(interaction.channelId||'') === RESULTS_CHANNEL_ID
+        if (!channelOk) { await interaction.reply({ content: 'Use este comando no canal de Resultados.', ephemeral: true }); return }
+        const matchId = interaction.options.getString('match_id')
+        const vencedorOpt = interaction.options.getString('vencedor')
+        const motivo = interaction.options.getString('motivo') || ''
+        const att = interaction.options.getAttachment('imagem')
+        if (!matchId || !vencedorOpt) { await interaction.reply({ content: 'Parâmetros inválidos.', ephemeral: true }); return }
+        if (!att || !att.url) { await interaction.reply({ content: 'Anexe o print da partida (imagem).', ephemeral: true }); return }
+        try {
+          const ref = db.collection('historicoPartidas').doc(matchId)
+          const snap = await ref.get()
+          if (!snap.exists) { await interaction.reply({ content: 'Partida não encontrada.', ephemeral: true }); return }
+          const teams = await getMatchTeamNames(matchId)
+          const text = await ocrTextFromUrl(att.url)
+          const textNorm = normalizeText(text)
+          let matched = []
+          for (const n of teams.t1.concat(teams.t2)) { const nn = normalizeName(n); if (nn && nn.length >= 3 && textNorm.includes(nn)) matched.push(n) }
+          const uniqueMatched = Array.from(new Set(matched))
+          if (uniqueMatched.length < 6) { await interaction.reply({ content: `Não foi possível validar o print: apenas ${uniqueMatched.length} jogador(es) conferem com a partida. É necessário coincidir pelo menos 6.`, ephemeral: true }); return }
+          const vencedor = vencedorOpt === 'azul' ? teams.time1Name : teams.time2Name
+          const payload = {
+            vencedor,
+            resultadoSource: 'discord-corrigido',
+            resultadoBy: interaction.user.id,
+            resultadoAt: admin.firestore.FieldValue.serverTimestamp(),
+            corrigido: true,
+            corrigidoMotivo: motivo
+          }
+          payload.proofUrl = att.url
+          payload.verificadoPorOcr = true
+          payload.jogadoresValidados = uniqueMatched.slice(0, 10)
+          payload.qtdJogadoresValidados = uniqueMatched.length
+          await ref.set(payload, { merge: true })
+          await interaction.reply({ content: `Resultado corrigido para ${vencedor} (match_id: ${matchId}).`, ephemeral: true })
+          try {
+            const pub = new EmbedBuilder()
+              .setTitle('Correção de Resultado')
+              .addFields(
+                { name: 'match_id', value: `${matchId}`, inline: true },
+                { name: 'Vencedor', value: `${vencedor}`, inline: true },
+                { name: 'Motivo', value: motivo || '—', inline: true },
+                { name: 'Validados', value: `${uniqueMatched.length} jogadores`, inline: true }
+              )
+              .setImage(att.url)
+              .setColor(0xFEE75C)
+            await interaction.channel.send({ embeds: [pub] })
+          } catch {}
+        } catch (e) {
+          await interaction.reply({ content: 'Falha ao corrigir resultado.', ephemeral: true })
+        }
       }
       
       if (interaction.commandName === 'channels') {
