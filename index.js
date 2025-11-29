@@ -19,6 +19,7 @@ const {
 } = require('discord.js')
 const path = require('path')
 const fs = require('fs')
+const emojiCache = {}
 
 function parseServiceAccount() {
   const raw = process.env.FIREBASE_SERVICE_ACCOUNT_JSON
@@ -132,6 +133,57 @@ function actionAsset(kind) {
   const p = path.join(__dirname, 'img', fname)
   if (fs.existsSync(p)) return new AttachmentBuilder(p, { name: fname })
   return null
+}
+
+function emojiFor(guildId, key) {
+  const m = emojiCache[guildId] || {}
+  return m[key] || ''
+}
+
+async function ensureGuildEmojisForChannel(ch) {
+  try {
+    if (!ch || !ch.guild) return {}
+    const guild = ch.guild
+    const names = ['top','jg','mid','adc','sup','ferro','bronze','prata','ouro','platina','esmeralda','diamante','mestre','graomestre','desafiante','mvp']
+    const existing = await guild.emojis.fetch().catch(()=>new Map())
+    const map = emojiCache[guild.id] || {}
+    for (const name of names) {
+      if (map[name]) continue
+      const found = [...existing.values()].find(e => e.name === name)
+      if (found) { map[name] = `<:${found.name}:${found.id}>`; continue }
+      const p = path.join(__dirname, 'img', `${name}.png`)
+      if (fs.existsSync(p)) {
+        try { const created = await guild.emojis.create({ attachment: p, name }); map[name] = `<:${created.name}:${created.id}>` } catch {}
+      }
+    }
+    emojiCache[guild.id] = map
+    return map
+  } catch { return {} }
+}
+
+function normalizeLane(s){
+  const n = String(s||'').toLowerCase()
+  if (n.includes('top')) return 'top'
+  if (n.includes('caç') || n.includes('jung') || n.includes('jg')) return 'jg'
+  if (n.includes('mid') || n.includes('meio')) return 'mid'
+  if (n.includes('adc') || n.includes('atir')) return 'adc'
+  if (n.includes('sup') || n.includes('suporte')) return 'sup'
+  return ''
+}
+
+function normalizeElo(s){
+  const n = String(s||'').toLowerCase()
+  if (n.includes('ferro')) return 'ferro'
+  if (n.includes('bronze')) return 'bronze'
+  if (n.includes('prata')) return 'prata'
+  if (n.includes('ouro')) return 'ouro'
+  if (n.includes('plat')) return 'platina'
+  if (n.includes('esmer')) return 'esmeralda'
+  if (n.includes('diam')) return 'diamante'
+  if (n.includes('mestre')) return 'mestre'
+  if (n.includes('grão') || n.includes('grao')) return 'graomestre'
+  if (n.includes('desaf')) return 'desafiante'
+  return ''
 }
 
 async function formatTeamsMentionsFromHistorico(matchId) {
@@ -724,16 +776,16 @@ client.on('interactionCreate', async (interaction) => {
         await mref.update({ [`playersReady.${userId}`]: true })
         if (uid) { await mref.update({ [`playerAcceptances.${uid}`]: 'accepted' }) }
         const af = actionAsset('accept')
-        const files = brandAssets()
-        if (af) files.push(af)
+        const files = af ? [af] : []
         const udataSnap = uid ? await userDoc(uid).get() : null
         const udata = udataSnap && udataSnap.exists ? udataSnap.data() : {}
         const tagA = String(udata.tag||'').trim().replace(/^#/,'')
         const handleA = tagA ? `${udata.playerName||udata.nome||interaction.user.username}#${tagA}` : (udata.playerName||udata.nome||interaction.user.username)
         const descA = ['Você aceitou a partida.', `Jogador: ${handleA}`, `Menção: <@${userId}>`].join('\n')
-        const embed = new EmbedBuilder().setTitle('Aceitar').setDescription(descA).setColor(0x57F287).setThumbnail('attachment://lollogo.png')
+        const embed = new EmbedBuilder().setTitle('Aceitar').setDescription(descA).setColor(0x57F287)
         if (af) embed.setImage('attachment://aceitar.png')
-        await interaction.reply({ embeds: [embed], files, ephemeral: true })
+        try { const userObj = await client.users.fetch(userId); await userObj.send({ embeds: [embed], files }) } catch {}
+        try { await interaction.reply({ content: 'Confirmação enviada no seu DM.', ephemeral: true }); setTimeout(()=>{ interaction.deleteReply().catch(()=>{}) }, 8000) } catch {}
         try { if (interaction.message && interaction.message.deletable) await interaction.message.delete().catch(()=>{}) } catch {}
       } else if (action === 'decline') {
         await mref.update({ [`playersReady.${userId}`]: false })
@@ -744,16 +796,16 @@ client.on('interactionCreate', async (interaction) => {
           await userDoc(uid).set({ matchmakingBanUntil: admin.firestore.Timestamp.fromDate(until) }, { merge: true })
         }
         const af = actionAsset('decline')
-        const files = brandAssets()
-        if (af) files.push(af)
+        const files = af ? [af] : []
         const udataSnap2 = uid ? await userDoc(uid).get() : null
         const udata2 = udataSnap2 && udataSnap2.exists ? udataSnap2.data() : {}
         const tagD = String(udata2.tag||'').trim().replace(/^#/,'')
         const handleD = tagD ? `${udata2.playerName||udata2.nome||interaction.user.username}#${tagD}` : (udata2.playerName||udata2.nome||interaction.user.username)
         const descD = ['Você recusou a partida.', `Jogador: ${handleD}`, `Menção: <@${userId}>`].join('\n')
-        const embed = new EmbedBuilder().setTitle('Recusar').setDescription(descD).setColor(0xED4245).setThumbnail('attachment://lollogo.png')
+        const embed = new EmbedBuilder().setTitle('Recusar').setDescription(descD).setColor(0xED4245)
         if (af) embed.setImage('attachment://recusar.png')
-        await interaction.reply({ embeds: [embed], files, ephemeral: true })
+        try { const userObj = await client.users.fetch(userId); await userObj.send({ embeds: [embed], files }) } catch {}
+        try { await interaction.reply({ content: 'Confirmação enviada no seu DM.', ephemeral: true }); setTimeout(()=>{ interaction.deleteReply().catch(()=>{}) }, 8000) } catch {}
         try { if (interaction.message && interaction.message.deletable) await interaction.message.delete().catch(()=>{}) } catch {}
       }
   }
@@ -845,7 +897,7 @@ function formatPlayers(list) {
 }
 
 // Formata jogadores como: Nome#TAG • Elo Divisão (Role) [• MVP]
-function formatPlayersResult(list, mvpName, preferMention = false) {
+function formatPlayersResult(list, mvpName, preferMention = false, guildId) {
   if (!Array.isArray(list)) return '-'
   const mvp = String(mvpName || '').trim().toLowerCase()
   return list
@@ -860,9 +912,13 @@ function formatPlayersResult(list, mvpName, preferMention = false) {
       const lane = p.roleAtribuida || p.role || p.funcao || ''
       const isMvp = nome && nome.toLowerCase() === mvp
       const mvpBadge = isMvp ? ' • MVP' : ''
-      const laneText = lane ? ` (${lane})` : ''
-      const left = preferMention && mention ? mention : handle
-      return `${left} • ${elo} ${div}${laneText}${mvpBadge}`
+      const laneKey = normalizeLane(lane)
+      const eloKey = normalizeElo(elo)
+      const laneIcon = guildId ? emojiFor(guildId, laneKey) : ''
+      const eloIcon = guildId ? emojiFor(guildId, eloKey) : ''
+      const laneText = laneIcon || (lane ? ` (${lane})` : '')
+      const left = preferMention ? (mention ? `${handle} (${mention})` : handle) : handle
+      return `${eloIcon} ${laneIcon} ${left} • ${div}${mvpBadge}`.trim()
     })
     .join('\n')
 }
@@ -1005,23 +1061,28 @@ async function sendReadyCheckNotifications(doc) {
       return d && d.discordUserId ? d.discordUserId : null
     } catch { return null }
   }
-  for (const p of players) {
+  for (let p of players) {
     let id = typeof p === 'string' ? p : p.discordUserId || p.id || p.userId
-    if (!id && typeof p === 'object' && p.uid) {
-      id = await resolveIdByUid(p.uid)
-    }
+    if (!id && typeof p === 'object' && p.uid) { id = await resolveIdByUid(p.uid) }
     let uid = typeof p === 'object' ? (p.uid || null) : null
     if (!uid && id) { const resolved = await resolveUidByDiscordId(id); uid = resolved || null }
     const prefs = uid ? await getNotificationPrefs(uid) : { ready: true }
     if (!prefs.ready) continue
-    if (!id && typeof p === 'object') {
-      if (p.discordUsername) id = resolveIdByUsername(p.discordUsername)
-      if (!id && p.discordGlobalName) id = resolveIdByUsername(p.discordGlobalName)
-    }
+    if (!id && typeof p === 'object') { if (p.discordUsername) id = resolveIdByUsername(p.discordUsername); if (!id && p.discordGlobalName) id = resolveIdByUsername(p.discordGlobalName) }
     if (!id) continue
     try {
       const user = await client.users.fetch(id)
-      const details = formatPlayersResult(players, '', false)
+      // enrich players with nome/tag/elo/div/role from users
+      const enriched = []
+      for (const it of players) {
+        let obj = typeof it === 'object' ? { ...it } : { nome: String(it||'') }
+        const uidIt = obj.uid || null
+        if (uidIt) {
+          try { const us = await userDoc(uidIt).get(); if (us.exists) { const ud = us.data()||{}; obj.tag = ud.tag || obj.tag; obj.nome = obj.nome || ud.nome || ud.playerName; obj.siteElo = ud.siteElo || obj.elo; obj.siteDivisao = ud.siteDivisao || obj.divisao; obj.role = obj.role || ud.roleAtribuida || ud.rolePrincipal } } catch {}
+        }
+        enriched.push(obj)
+      }
+      const details = formatPlayersResult(enriched, '', false)
       const until = data.timestampFim && data.timestampFim.toDate ? data.timestampFim.toDate() : null
       const now = new Date()
       const msLeft = until ? Math.max(0, until.getTime() - now.getTime()) : 2 * 60 * 1000
@@ -1049,14 +1110,19 @@ async function sendReadyCheckNotifications(doc) {
     try {
       const playersRaw = playersFromTimes(data).length ? playersFromTimes(data) : playerList(data)
       const players = []
-      for (const p of playersRaw) {
+      for (let p of playersRaw) {
         let id = p && typeof p === 'object' ? (p.discordUserId || p.id || p.userId || null) : null
-        if (!id && p && typeof p === 'object' && p.uid) {
-          id = await resolveDiscordIdByUid(p.uid)
+        if (!id && p && typeof p === 'object' && p.uid) { id = await resolveDiscordIdByUid(p.uid) }
+        let obj = typeof p === 'object' ? { ...p } : { nome: String(p||'') }
+        obj.discordUserId = id || null
+        const uidIt = obj.uid || null
+        if (uidIt) {
+          try { const us = await userDoc(uidIt).get(); if (us.exists) { const ud = us.data()||{}; obj.tag = ud.tag || obj.tag; obj.nome = obj.nome || ud.nome || ud.playerName; obj.siteElo = ud.siteElo || obj.elo; obj.siteDivisao = ud.siteDivisao || obj.divisao; obj.role = obj.role || ud.roleAtribuida || ud.rolePrincipal } } catch {}
         }
-        players.push({ ...(typeof p === 'object' ? p : { nome: String(p||'') }), discordUserId: id || null })
+        players.push(obj)
       }
-      const details = formatPlayersResult(players, '', true)
+      await ensureGuildEmojisForChannel(targetChannel)
+      const details = formatPlayersResult(players, '', true, targetChannel.guild?.id)
       const until = data.timestampFim && data.timestampFim.toDate ? data.timestampFim.toDate() : null
       const now = new Date()
       const msLeft = until ? Math.max(0, until.getTime() - now.getTime()) : 2 * 60 * 1000
