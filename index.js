@@ -824,26 +824,18 @@ client.on('interactionCreate', async (interaction) => {
     }
     if (interaction.isButton()) {
       const cid = interaction.customId || ''
-      if (cid === 'resultado_help') {
-        const base = process.env.MATCH_HISTORY_BASE_URL || process.env.SITE_BASE_URL || ''
-        const chId = process.env.DISCORD_RESULTS_CHANNEL_ID || '1444182835975028848'
-        const msg = [
-          'Como enviar o resultado:',
-          '1) Copie o match_id na página Player → Histórico → Em andamento (botão Copiar).',
-          `2) No canal de Resultados (${chId}), execute /resultado e anexe o print.`,
-          `Página Player: ${joinBase(base,'player.html')}`
-        ].join('\n')
-        await interaction.reply({ content: msg, ephemeral: true })
-        return
-      }
-      if (cid === 'corrigirresultado_help') {
-        const chId = process.env.DISCORD_RESULTS_CHANNEL_ID || '1444182835975028848'
-        const msg = [
-          'Como corrigir o resultado:',
-          `1) No canal de Resultados (${chId}), execute /corrigirresultado com match_id, lado vencedor e anexe o print.`,
-          '2) Explique o motivo na opção Motivo (opcional).'
-        ].join('\n')
-        await interaction.reply({ content: msg, ephemeral: true })
+      if (cid === 'resultado_send') {
+        try {
+          const cmds = await interaction.client.application.commands.fetch()
+          const cmd = [...cmds.values()].find(c => c.name === 'resultado')
+          if (cmd) {
+            await interaction.reply({ content: `Clique para abrir o comando: </resultado:${cmd.id}>\nAnexe o print e informe o match_id copiado da página Player.`, ephemeral: true })
+          } else {
+            await interaction.reply({ content: 'Use o comando /resultado, anexe o print e informe o match_id.', ephemeral: true })
+          }
+        } catch {
+          await interaction.reply({ content: 'Use o comando /resultado, anexe o print e informe o match_id.', ephemeral: true })
+        }
         return
       }
     }
@@ -1078,19 +1070,16 @@ async function publishDiscordConfig() {
 
     const resultsMarker = '📌 Guia de Resultados'
     const resultsContent = '📌 Guia de Resultados'
-    const base = process.env.MATCH_HISTORY_BASE_URL || process.env.SITE_BASE_URL || ''
     const resultsEmbed = new EmbedBuilder()
-      .setTitle('📌 Guia de Resultados — como enviar o print')
+      .setTitle('📌 Guia de Resultados — enviar o print')
       .setColor(0x57F287)
       .setDescription([
-        '• Copie o match_id na página Player → Histórico → Em andamento (use o botão Copiar).',
-        `• No canal Resultados (${resultsChId}), use o comando /resultado com match_id e anexe o print.`,
-        '• Se precisar corrigir, use /corrigirresultado com vencedor e o mesmo print.',
-        `• Página Player: ${joinBase(base, 'player.html')}`
+        '• Copie o match_id na página Player → Histórico → Em andamento (use o botão Copiar UID da Partida).',
+        '• No canal Resultados, use o comando /resultado com match_id e anexe o print.',
+        '• Página Player: https://customdasestrelas.com.br/player.html/player.html'
       ].join('\n'))
     const resultsRow = new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId('resultado_help').setLabel('Como enviar resultado').setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId('corrigirresultado_help').setLabel('Como corrigir resultado').setStyle(ButtonStyle.Secondary)
+      new ButtonBuilder().setCustomId('resultado_send').setLabel('Enviar Resultado').setStyle(ButtonStyle.Primary)
     )
     await ensurePinned(resultsCh, resultsContent, resultsMarker, resultsRow, resultsEmbed)
     } catch {}
@@ -1366,6 +1355,12 @@ function setupMatchListeners() {
           if (mid && chid) {
             try { const ch = await client.channels.fetch(chid).catch(()=>null); const msg = ch ? await ch.messages.fetch(mid).catch(()=>null) : null; if (msg && msg.deletable) await msg.delete().catch(()=>{}) } catch {}
           }
+          const dmMap = data.dmMessageIds || {}
+          try {
+            for (const [discordId, msgId] of Object.entries(dmMap)) {
+              try { const user = await client.users.fetch(discordId); const dm = await user.createDM(); const m = await dm.messages.fetch(msgId).catch(()=>null); if (m && m.deletable) await m.delete().catch(()=>{}) } catch {}
+            }
+          } catch {}
         })()
       }
       if ((change.type === 'modified' || change.type === 'added') && data.vencedor) {
