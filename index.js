@@ -543,6 +543,29 @@ client.on('interactionCreate', async (interaction) => {
     const targetUserId = parts[2]
     const userId = interaction.user.id
     const uid = await resolveUidByDiscordId(userId)
+    
+    if (action === 'perfil_open') {
+      if (!uid) { await interaction.reply({ content: 'Vincule seu Discord ao site com /linkuid ou /linkcode para ver seu perfil.', ephemeral: true }); return }
+      const uref = userDoc(uid)
+      const usnap = await uref.get()
+      const data = usnap.exists ? usnap.data() : {}
+      const inQ = await isInQueue(uid)
+      const inQueue = !!inQ
+      const rank = await getRankingForUser(data)
+      const nomeBase = data.playerName || data.nome || interaction.member?.displayName || interaction.user.username
+      const embed = new EmbedBuilder()
+        .setTitle('Perfil do Jogador')
+        .addFields(
+          { name: 'Nome', value: `${nomeBase}` , inline: true },
+          { name: 'Elo', value: `${rank.siteElo ?? '-'}`, inline: true },
+          { name: 'Divisão', value: `${rank.siteDivisao ?? '-'}`, inline: true },
+          { name: 'Role Principal', value: `${data.rolePrincipal ?? '-'}`, inline: true },
+          { name: 'Role Secundária', value: `${data.roleSecundaria ?? '-'}`, inline: true },
+          { name: 'Status da Fila', value: inQueue ? 'Na fila' : 'Fora da fila', inline: true }
+        )
+      await interaction.reply({ embeds: [embed], ephemeral: true })
+      return
+    }
     if ((action === 'accept' || action === 'decline') && targetUserId && targetUserId !== userId) {
       await interaction.reply({ content: 'Este botão não é para você.', ephemeral: true });
       return
@@ -558,10 +581,28 @@ client.on('interactionCreate', async (interaction) => {
     }
     if (action === 'queue_join') {
       if (!uid) { await interaction.reply({ content: 'Vincule seu Discord ao site com /linkuid ou /linkcode antes de entrar na fila.', ephemeral: true }); return }
-      const ref = queueDoc(uid)
-      const snap = await ref.get()
-      if (!snap.exists) { await ref.set({ uid, source: 'queue', createdAt: admin.firestore.FieldValue.serverTimestamp() }); await interaction.reply({ content: 'Você entrou na fila!', ephemeral: true }) }
-      else { await interaction.reply({ content: 'Você já está na fila.', ephemeral: true }) }
+      const existing = await isInQueue(uid)
+      if (existing) {
+        const msg = [
+          'Você já está na fila.',
+          '• Para sair, clique em "Sair da Fila" ou use o comando /fila.'
+        ].join('\n')
+        await interaction.reply({ content: msg, ephemeral: true })
+        return
+      }
+      const uref = userDoc(uid)
+      const usnap = await uref.get()
+      const data = usnap.exists ? usnap.data() : {}
+      const rank = await getRankingForUser(data)
+      const nomeBase = data.playerName || data.nome || (interaction.member && interaction.member.displayName) || interaction.user.username
+      const payload = userToQueueData(uid, { ...data, nome: nomeBase, siteElo: rank.siteElo, siteDivisao: rank.siteDivisao })
+      await db.collection('queue').doc(uid).set(payload)
+      const msg = [
+        'Você entrou na fila com sucesso.',
+        '• Você receberá um Ready Check quando uma partida for montada.',
+        '• Para sair, clique em "Sair da Fila" ou use o comando /fila.'
+      ].join('\n')
+      await interaction.reply({ content: msg, ephemeral: true })
       return
     }
     if (action === 'queue_confirm_join') {
@@ -572,9 +613,10 @@ client.on('interactionCreate', async (interaction) => {
       const data = usnap.exists ? usnap.data() : {}
       const existing = await isInQueue(targetUid)
       if (!existing) {
-        const rank = await getRankingForUser(data)
-        const payload = userToQueueData(targetUid, { ...data, siteElo: rank.siteElo, siteDivisao: rank.siteDivisao })
-        await db.collection('queue').add(payload)
+      const rank = await getRankingForUser(data)
+      const nomeBase = data.playerName || data.nome || (interaction.member && interaction.member.displayName) || interaction.user.username
+      const payload = userToQueueData(targetUid, { ...data, nome: nomeBase, siteElo: rank.siteElo, siteDivisao: rank.siteDivisao })
+        await db.collection('queue').doc(targetUid).set(payload)
         await interaction.reply({ content: 'Você entrou na fila!', ephemeral: true })
         try { setTimeout(()=>{ interaction.deleteReply().catch(()=>{}) }, 10000) } catch {}
       } else {
@@ -598,36 +640,54 @@ client.on('interactionCreate', async (interaction) => {
     }
     if (action === 'queue_leave') {
       if (!uid) { await interaction.reply({ content: 'Nenhum vínculo encontrado. Use /linkuid ou /linkcode primeiro.', ephemeral: true }); return }
-      await queueDoc(uid).delete().catch(()=>{})
-      await interaction.reply({ content: 'Você saiu da fila.', ephemeral: true }); return
+      try {
+        const qsnap = await db.collection('queue').where('uid','==',uid).get()
+        const dels = []
+        qsnap.forEach(doc=> dels.push(doc.ref.delete()))
+        await Promise.all(dels)
+      } catch {}
+      const msg = [
+        'Você saiu da fila.',
+        '• Quando quiser retornar, clique em "Entrar na Fila" ou use o comando /fila.'
+      ].join('\n')
+      await interaction.reply({ content: msg, ephemeral: true }); return
     }
     if (action === 'queue_confirm_join' || action === 'queue_confirm_leave' || action === 'queue_join' || action === 'queue_leave') {
-      try { if (interaction.message && interaction.message.deletable) await interaction.message.delete().catch(()=>{}) } catch {}
+      try {
+        const msg = interaction.message
+        if (msg && !msg.pinned && msg.deletable) {
+          await msg.delete().catch(()=>{})
+        }
+      } catch {}
+      return
     }
-    const mref = db.collection('aguardandoPartidas').doc(matchId)
-    const msnap = await mref.get()
-    if (!msnap.exists) { await interaction.reply({ content: 'Partida não encontrada ou expirada.', ephemeral: true }); return }
-    const matchData = msnap.data() || {}
-    if (uid && Array.isArray(matchData.uids) && !matchData.uids.includes(uid)) { await interaction.reply({ content: 'Você não está nesta partida.', ephemeral: true }); return }
-    await mref.set({ playersReady: msnap.data().playersReady || {}, playerAcceptances: msnap.data().playerAcceptances || {} }, { merge: true })
+    if (action === 'accept' || action === 'decline') {
+      const mref = db.collection('aguardandoPartidas').doc(matchId)
+      const msnap = await mref.get()
+      if (!msnap.exists) { await interaction.reply({ content: 'Partida não encontrada ou expirada.', ephemeral: true }); return }
+      const matchData = msnap.data() || {}
+      if (uid && Array.isArray(matchData.uids) && !matchData.uids.includes(uid)) { await interaction.reply({ content: 'Você não está nesta partida.', ephemeral: true }); return }
+      await mref.set({ playersReady: msnap.data().playersReady || {}, playerAcceptances: msnap.data().playerAcceptances || {} }, { merge: true })
       if (action === 'accept') {
         await mref.update({ [`playersReady.${userId}`]: true })
         if (uid) { await mref.update({ [`playerAcceptances.${uid}`]: 'accepted' }) }
-      await interaction.reply({ content: 'Você aceitou a partida.', ephemeral: true })
-      try { if (interaction.message && interaction.message.deletable) await interaction.message.delete().catch(()=>{}) } catch {}
-    } else if (action === 'decline') {
-      await mref.update({ [`playersReady.${userId}`]: false })
-      if (uid) {
-        await mref.update({ [`playerAcceptances.${uid}`]: 'declined' })
-        await queueDoc(uid).delete().catch(() => {})
-        const until = new Date(Date.now() + 15 * 60 * 1000)
-        await userDoc(uid).set({ matchmakingBanUntil: admin.firestore.Timestamp.fromDate(until) }, { merge: true })
-      }
-      await interaction.reply({ content: 'Você recusou a partida.', ephemeral: true })
-      try { if (interaction.message && interaction.message.deletable) await interaction.message.delete().catch(()=>{}) } catch {}
+        await interaction.reply({ content: 'Você aceitou a partida.', ephemeral: true })
+        try { if (interaction.message && interaction.message.deletable) await interaction.message.delete().catch(()=>{}) } catch {}
+      } else if (action === 'decline') {
+        await mref.update({ [`playersReady.${userId}`]: false })
+        if (uid) {
+          await mref.update({ [`playerAcceptances.${uid}`]: 'declined' })
+          await queueDoc(uid).delete().catch(() => {})
+          const until = new Date(Date.now() + 15 * 60 * 1000)
+          await userDoc(uid).set({ matchmakingBanUntil: admin.firestore.Timestamp.fromDate(until) }, { merge: true })
+        }
+        await interaction.reply({ content: 'Você recusou a partida.', ephemeral: true })
+        try { if (interaction.message && interaction.message.deletable) await interaction.message.delete().catch(()=>{}) } catch {}
     }
   }
-  } catch (e) {
+  }
+  }
+  catch (e) {
     console.error('Erro em interação', e)
     if (interaction.isRepliable()) {
       try {
@@ -787,47 +847,61 @@ async function publishDiscordConfig() {
   try { await db.collection('config').doc('discord').set({ oauthClientId: clientId, oauthRedirectUri: redirectUri }, { merge: true }) } catch {}
 }
 
-// 📌 Mensagens fixas de instruções nos canais de Fila e Vínculo
-async function ensurePinnedHelpMessages() {
-  try {
-    const queueCh = await getQueueChannel()
-    const linkChId = process.env.DISCORD_LINK_CHANNEL_ID
-    const linkCh = linkChId ? await client.channels.fetch(linkChId).catch(()=>null) : null
+  // 📌 Mensagens fixas de instruções nos canais de Fila e Vínculo
+  async function ensurePinnedHelpMessages() {
+    try {
+      const queueCh = await getQueueChannel()
+      const linkChId = process.env.DISCORD_LINK_CHANNEL_ID
+      const linkCh = linkChId ? await client.channels.fetch(linkChId).catch(()=>null) : null
 
-    async function ensurePinned(channel, content, marker){
+    async function ensurePinned(channel, content, marker, components, embed){
       if (!channel || channel.type !== ChannelType.GuildText) return
       try {
         const pins = await channel.messages.fetchPinned().catch(()=>null)
         let mine = pins ? pins.find(m => m.author?.id === client.user?.id && String(m.content||'').startsWith(marker)) : null
         if (mine) {
-          await mine.edit({ content }).catch(()=>{})
+          await mine.edit({ content, components: components ? [components] : [], embeds: embed ? [embed] : [] }).catch(()=>{})
         } else {
-          const sent = await channel.send({ content }).catch(()=>null)
+          const sent = await channel.send({ content, components: components ? [components] : [], embeds: embed ? [embed] : [] }).catch(()=>null)
           if (sent) { try { await sent.pin() } catch {} }
         }
       } catch {}
     }
 
     const queueMarker = '📌 Guia da Fila'
-    const queueContent = [
-      '📌 Guia da Fila — como usar o bot:',
-      '• Use `/fila` para Entrar/Sair da fila.',
-      '• Use `/perfil` para ver Elo, Divisão e roles.',
-      '• Quando o matchmaking criar uma partida, você receberá DM com botões para Aceitar/Recusar.',
-      '• Também publicamos o Ready Check aqui com os jogadores e detalhes.',
-      '• Histórico: link nas mensagens de Resultado quando a partida finalizar.'
-    ].join('\n')
-    await ensurePinned(queueCh, queueContent, queueMarker)
+    const queueContent = '📌 Guia da Fila'
+    const queueEmbed = new EmbedBuilder()
+      .setTitle('📌 Guia da Fila — como usar o bot')
+      .setColor(0x5865F2)
+      .setDescription([
+        '• Use "Entrar na Fila" para começar a procurar partidas. Se já estiver na fila, use "Sair da Fila".',
+        '• Clique em "Perfil" para ver seu Elo, Divisão, roles e status da fila.',
+        '• Ao montar uma partida, você receberá uma DM com botões para Aceitar/Recusar. Também publicamos o Ready Check aqui.',
+        '• O Resultado da partida será anunciado com link para o histórico.'
+      ].join('\n'))
+    const queueRow = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('queue_join').setLabel('Entrar na Fila').setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId('queue_leave').setLabel('Sair da Fila').setStyle(ButtonStyle.Danger),
+      new ButtonBuilder().setCustomId('perfil_open').setLabel('Perfil').setStyle(ButtonStyle.Secondary)
+    )
+    await ensurePinned(queueCh, queueContent, queueMarker, queueRow, queueEmbed)
 
     const linkMarker = '📌 Guia de Vínculo'
-    const linkContent = [
-      '📌 Guia de Vínculo — conectar seu Discord ao site:',
-      '• Opção 1: `/linkuid <seu UID>` para vincular diretamente.',
-      '• Opção 2: `/linkcode` para gerar um código; depois use o código em Editar Perfil → Vincular pelo Código.',
-      '• Após vincular, deslogue e logue novamente no site para carregar o Discord.',
-      `• OAuth: acesse ${process.env.DISCORD_OAUTH_REDIRECT_URI || '—'} se habilitado.`
-    ].join('\n')
-    await ensurePinned(linkCh, linkContent, linkMarker)
+    const linkContent = '📌 Guia de Vínculo'
+    const linkEmbed = new EmbedBuilder()
+      .setTitle('📌 Guia de Vínculo — conectar seu Discord ao site')
+      .setColor(0x57F287)
+      .setDescription([
+        '• Clique em "Vincular por UID" para receber instruções de vínculo via UID.',
+        '• Clique em "Gerar Código de Vínculo" para criar um código e usar no site (Editar Perfil → Vincular pelo Código).',
+        '• Após vincular, deslogue e logue novamente no site para carregar o Discord.',
+        `• OAuth: ${process.env.DISCORD_OAUTH_REDIRECT_URI || '—'} (se habilitado).`
+      ].join('\n'))
+    const linkRow = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('linkuid_start').setLabel('Vincular por UID').setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId('linkcode_start').setLabel('Gerar Código de Vínculo').setStyle(ButtonStyle.Secondary)
+    )
+    await ensurePinned(linkCh, linkContent, linkMarker, linkRow, linkEmbed)
   } catch {}
 }
 
