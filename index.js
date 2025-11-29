@@ -112,6 +112,68 @@ function normalizeName(s){
     .trim()
 }
 
+async function safeReply(interaction, data){
+  try {
+    if (interaction.deferred || interaction.replied) {
+      return await interaction.editReply(data)
+    } else {
+      return await interaction.reply({ ...(typeof data === 'object' ? data : { content: String(data||'') }), ephemeral: true })
+    }
+  } catch (e) {
+    try {
+      if (!interaction.deferred && !interaction.replied) { await interaction.deferReply({ ephemeral: true }) }
+      return await interaction.editReply(data)
+    } catch {}
+  }
+}
+
+function buildOcrDemoEmbed(attUrl, teams, uniqueMatched, ocrMs, textLen){
+  const matchedNorm = new Set(uniqueMatched.map(n => normalizeName(n)))
+  const fmt = (name) => `${matchedNorm.has(normalizeName(name)) ? '✅' : '❌'} ${name}`
+  const azul = (teams.t1 || []).slice(0,10).map(fmt).join('\n') || '-'
+  const vermelho = (teams.t2 || []).slice(0,10).map(fmt).join('\n') || '-'
+  return new EmbedBuilder()
+    .setTitle('Leitura do Print (OCR)')
+    .addFields(
+      { name: 'Tempo OCR', value: `${ocrMs} ms`, inline: true },
+      { name: 'Texto extraído', value: `${textLen} chars`, inline: true },
+      { name: 'Conferências', value: `${uniqueMatched.length}`, inline: true }
+    )
+    .addFields(
+      { name: 'Time Azul (reconhecidos)', value: azul, inline: true },
+      { name: 'Time Vermelho (reconhecidos)', value: vermelho, inline: true }
+    )
+    .setImage(attUrl)
+    .setColor(0x5865F2)
+    .setThumbnail('attachment://lollogo.png')
+}
+
+async function sendTemporaryChannelMessage(channel, payload, ms = 60 * 1000) {
+  try {
+    const m = await channel.send(payload)
+    setTimeout(async () => {
+      try { const msg = await channel.messages.fetch(m.id).catch(()=>null); if (msg && msg.deletable) await msg.delete().catch(()=>{}) } catch {}
+    }, ms)
+    return m
+  } catch {}
+}
+
+function tokenizeTextNorm(textNorm){
+  try { return String(textNorm||'').split(' ').filter(Boolean) } catch { return [] }
+}
+
+function nameMatches(textNorm, tokens, nn){
+  if (!nn || nn.length < 3) return false
+  if (textNorm.includes(nn)) return true
+  for (const tk of tokens) {
+    const t0 = tk.replace(/\d+/g,'')
+    if (!t0) continue
+    if (t0.includes(nn)) return true
+    if (nn.includes(t0) && t0.length >= 3) return true
+  }
+  return false
+}
+
 async function ocrTextFromUrl(url) {
   try {
     const timeoutMs = Number(process.env.OCR_TIMEOUT_MS || '8000')
@@ -481,7 +543,7 @@ client.on('interactionCreate', async (interaction) => {
       }
       if (interaction.commandName === 'maketestmatch') {
         const channelOk = String(interaction.channelId||'') === RESULTS_CHANNEL_ID
-        if (!channelOk) { await interaction.reply({ content: 'Use este comando no canal de Resultados.', ephemeral: true }); return }
+        if (!channelOk) { await safeReply(interaction, { content: 'Use este comando no canal de Resultados.' }); return }
         const id = `test_${Date.now()}`
         const ref = db.collection('historicoPartidas').doc(id)
         const nomes1 = ['Alpha','Bravo','Charlie','Delta','Echo']
@@ -509,21 +571,21 @@ client.on('interactionCreate', async (interaction) => {
       }
       if (interaction.commandName === 'resultado') {
         const channelOk = String(interaction.channelId||'') === RESULTS_CHANNEL_ID
-        if (!channelOk) { await interaction.reply({ content: 'Use este comando no canal de Resultados.', ephemeral: true }); return }
+        if (!channelOk) { await safeReply(interaction, { content: 'Use este comando no canal de Resultados.' }); return }
         const matchId = interaction.options.getString('match_id')
         const att = interaction.options.getAttachment('imagem')
         console.log('[resultado]', new Date().toISOString(), 'start', { userId: interaction.user.id, channelId: interaction.channelId, matchId })
         if (!interaction.deferred && !interaction.replied) { try { await interaction.deferReply({ ephemeral: true }) } catch (e) { console.error('[resultado]', new Date().toISOString(), 'defer error', e && e.code, e && e.message) } }
         console.log('[resultado]', new Date().toISOString(), 'deferred')
-        if (!matchId) { await interaction.editReply({ content: 'Informe o match_id.' }); return }
-        if (!att || !att.url) { await interaction.editReply({ content: 'Anexe o print da partida (imagem).' }); return }
+        if (!matchId) { await safeReply(interaction, { content: 'Informe o match_id.' }); return }
+        if (!att || !att.url) { await safeReply(interaction, { content: 'Anexe o print da partida (imagem).' }); return }
         try {
           const ref = db.collection('historicoPartidas').doc(matchId)
           const snap = await ref.get()
           console.log('[resultado]', new Date().toISOString(), 'historico fetch', { exists: snap.exists })
-          if (!snap.exists) { await interaction.editReply({ content: 'Partida não encontrada.' }); return }
+          if (!snap.exists) { await safeReply(interaction, { content: 'Partida não encontrada.' }); return }
           const d0 = snap.data() || {}
-          if (d0.vencedor && d0.vencedor !== 'N/A') { console.log('[resultado]', new Date().toISOString(), 'already has winner', { vencedor: d0.vencedor }); await interaction.editReply({ content: `Partida já possui vencedor (${d0.vencedor}). Use /corrigirresultado para alterar.` }); return }
+          if (d0.vencedor && d0.vencedor !== 'N/A') { console.log('[resultado]', new Date().toISOString(), 'already has winner', { vencedor: d0.vencedor }); await safeReply(interaction, { content: `Partida já possui vencedor (${d0.vencedor}). Use /corrigirresultado para alterar.` }); return }
           console.log('[resultado]', new Date().toISOString(), 'team names start')
           const teams = await getMatchTeamNames(matchId)
           console.log('[resultado]', new Date().toISOString(), 'ocr start')
@@ -531,17 +593,21 @@ client.on('interactionCreate', async (interaction) => {
           const text = await ocrTextFromUrl(att.url)
           console.log('[resultado]', new Date().toISOString(), 'ocr done', { ms: Date.now()-ocrT0, textLen: String(text||'').length })
           const textNorm = normalizeText(text)
+          const tokens = tokenizeTextNorm(textNorm)
           let matched = []
-          for (const n of teams.t1.concat(teams.t2)) { const nn = normalizeName(n); if (nn && nn.length >= 3 && textNorm.includes(nn)) matched.push(n) }
+          for (const n of teams.t1.concat(teams.t2)) { const nn = normalizeName(n); if (nameMatches(textNorm, tokens, nn)) matched.push(n) }
           const uniqueMatched = Array.from(new Set(matched))
           console.log('[resultado]', new Date().toISOString(), 'players matched', { count: uniqueMatched.length })
+          try { const demo = buildOcrDemoEmbed(att.url, teams, uniqueMatched, Date.now()-ocrT0, String(text||'').length); await sendTemporaryChannelMessage(interaction.channel, { embeds: [demo], files: brandAssets() }, 60*1000) } catch {}
           if (uniqueMatched.length < 6) {
-            await interaction.editReply({ content: `Não foi possível validar o print: apenas ${uniqueMatched.length} jogador(es) conferem com a partida. É necessário coincidir pelo menos 6.` })
+            const txt = `Não foi possível validar o print: apenas ${uniqueMatched.length} jogador(es) conferem com a partida. É necessário coincidir pelo menos 6.`
+            await safeReply(interaction, { content: txt })
+            try { await sendTemporaryChannelMessage(interaction.channel, { content: txt }, 60*1000) } catch {}
             return
           }
           const winnerSide = detectWinnerFromText(text, teams.t1, teams.t2)
           console.log('[resultado]', new Date().toISOString(), 'winner by names count', { winnerSide })
-          if (!winnerSide) { await interaction.editReply({ content: 'Não foi possível determinar o time vencedor a partir dos nomes do print. Use /corrigirresultado se necessário.' }); return }
+          if (!winnerSide) { const txt = 'Não foi possível determinar o time vencedor a partir dos nomes do print. Use /corrigirresultado se necessário.'; await safeReply(interaction, { content: txt }); try { await sendTemporaryChannelMessage(interaction.channel, { content: txt }, 60*1000) } catch {}; return }
           const vencedor = winnerSide === 'time1' ? teams.time1Name : teams.time2Name
           const payload = {
             vencedor,
@@ -557,7 +623,7 @@ client.on('interactionCreate', async (interaction) => {
           const setT0 = Date.now()
           await ref.set(payload, { merge: true })
           console.log('[resultado]', new Date().toISOString(), 'firestore set done', { ms: Date.now()-setT0 })
-          await interaction.editReply({ content: `Resultado registrado: ${vencedor} (match_id: ${matchId}).` })
+          await safeReply(interaction, { content: `Resultado registrado: ${vencedor} (match_id: ${matchId}).` })
           console.log('[resultado]', new Date().toISOString(), 'reply edited')
           try {
             const teamsMentions = await formatTeamsMentionsFromHistorico(matchId)
@@ -580,7 +646,7 @@ client.on('interactionCreate', async (interaction) => {
           } catch {}
         } catch (e) {
           console.error('[resultado]', new Date().toISOString(), 'error', e && e.stack ? e.stack : e)
-          await interaction.editReply({ content: 'Falha ao registrar resultado.' })
+          await safeReply(interaction, { content: 'Falha ao registrar resultado.' })
         }
       }
       if (interaction.commandName === 'corrigirresultado') {
@@ -593,24 +659,26 @@ client.on('interactionCreate', async (interaction) => {
         console.log('[corrigirresultado]', new Date().toISOString(), 'start', { userId: interaction.user.id, channelId: interaction.channelId, matchId, vencedorOpt, motivoLen: String(motivo||'').length })
         if (!interaction.deferred && !interaction.replied) { try { await interaction.deferReply({ ephemeral: true }) } catch (e) { console.error('[corrigirresultado]', new Date().toISOString(), 'defer error', e && e.code, e && e.message) } }
         console.log('[corrigirresultado]', new Date().toISOString(), 'deferred')
-        if (!matchId || !vencedorOpt) { await interaction.editReply({ content: 'Parâmetros inválidos.' }); return }
-        if (!att || !att.url) { await interaction.editReply({ content: 'Anexe o print da partida (imagem).' }); return }
+        if (!matchId || !vencedorOpt) { await safeReply(interaction, { content: 'Parâmetros inválidos.' }); return }
+        if (!att || !att.url) { await safeReply(interaction, { content: 'Anexe o print da partida (imagem).' }); return }
         try {
           const ref = db.collection('historicoPartidas').doc(matchId)
           const snap = await ref.get()
           console.log('[corrigirresultado]', new Date().toISOString(), 'historico fetch', { exists: snap.exists })
-          if (!snap.exists) { await interaction.editReply({ content: 'Partida não encontrada.' }); return }
+          if (!snap.exists) { await safeReply(interaction, { content: 'Partida não encontrada.' }); return }
           const teams = await getMatchTeamNames(matchId)
           console.log('[corrigirresultado]', new Date().toISOString(), 'ocr start')
           const ocrT0 = Date.now()
           const text = await ocrTextFromUrl(att.url)
           console.log('[corrigirresultado]', new Date().toISOString(), 'ocr done', { ms: Date.now()-ocrT0, textLen: String(text||'').length })
           const textNorm = normalizeText(text)
+          const tokens = tokenizeTextNorm(textNorm)
           let matched = []
-          for (const n of teams.t1.concat(teams.t2)) { const nn = normalizeName(n); if (nn && nn.length >= 3 && textNorm.includes(nn)) matched.push(n) }
+          for (const n of teams.t1.concat(teams.t2)) { const nn = normalizeName(n); if (nameMatches(textNorm, tokens, nn)) matched.push(n) }
           const uniqueMatched = Array.from(new Set(matched))
           console.log('[corrigirresultado]', new Date().toISOString(), 'players matched', { count: uniqueMatched.length })
-          if (uniqueMatched.length < 6) { await interaction.editReply({ content: `Não foi possível validar o print: apenas ${uniqueMatched.length} jogador(es) conferem com a partida. É necessário coincidir pelo menos 6.` }); return }
+          try { const demo = buildOcrDemoEmbed(att.url, teams, uniqueMatched, Date.now()-ocrT0, String(text||'').length); await sendTemporaryChannelMessage(interaction.channel, { embeds: [demo], files: brandAssets() }, 60*1000) } catch {}
+          if (uniqueMatched.length < 6) { const txt = `Não foi possível validar o print: apenas ${uniqueMatched.length} jogador(es) conferem com a partida. É necessário coincidir pelo menos 6.`; await safeReply(interaction, { content: txt }); try { await sendTemporaryChannelMessage(interaction.channel, { content: txt }, 60*1000) } catch {}; return }
           const vencedor = vencedorOpt === 'azul' ? teams.time1Name : teams.time2Name
           const payload = {
             vencedor,
@@ -628,7 +696,7 @@ client.on('interactionCreate', async (interaction) => {
           const setT0 = Date.now()
           await ref.set(payload, { merge: true })
           console.log('[corrigirresultado]', new Date().toISOString(), 'firestore set done', { ms: Date.now()-setT0 })
-          await interaction.editReply({ content: `Resultado corrigido para ${vencedor} (match_id: ${matchId}).` })
+          await safeReply(interaction, { content: `Resultado corrigido para ${vencedor} (match_id: ${matchId}).` })
           console.log('[corrigirresultado]', new Date().toISOString(), 'reply edited')
           try {
             const pub = new EmbedBuilder()
@@ -651,7 +719,7 @@ client.on('interactionCreate', async (interaction) => {
           } catch {}
         } catch (e) {
           console.error('[corrigirresultado]', new Date().toISOString(), 'error', e && e.stack ? e.stack : e)
-          await interaction.editReply({ content: 'Falha ao corrigir resultado.' })
+          await safeReply(interaction, { content: 'Falha ao corrigir resultado.' })
         }
       }
       
@@ -801,24 +869,40 @@ client.on('interactionCreate', async (interaction) => {
       if (action === 'accept') {
         await mref.update({ [`playersReady.${userId}`]: true })
         if (uid) { await mref.update({ [`playerAcceptances.${uid}`]: 'accepted' }) }
-        const af = actionAsset('accept')
-        const files = af ? [af] : []
-        const udataSnap = uid ? await userDoc(uid).get() : null
-        const udata = udataSnap && udataSnap.exists ? udataSnap.data() : {}
-        const tagA = String(udata.tag||'').trim().replace(/^#/,'')
-        const handleA = tagA ? `${udata.playerName||udata.nome||interaction.user.username}#${tagA}` : (udata.playerName||udata.nome||interaction.user.username)
-        const descA = ['Você aceitou a partida.', `Jogador: ${handleA}`, `Menção: <@${userId}>`].join('\n')
-        const embed = new EmbedBuilder().setTitle('Aceitar').setDescription(descA).setColor(0x57F287)
-        if (af) embed.setImage('attachment://aceitar.png')
-        try { const userObj = await client.users.fetch(userId); await userObj.send({ embeds: [embed], files }) } catch {}
-        try { await interaction.reply({ content: 'Confirmação enviada no seu DM.', ephemeral: true }); setTimeout(()=>{ interaction.deleteReply().catch(()=>{}) }, 8000) } catch {}
-        try { if (interaction.message && interaction.message.deletable) await interaction.message.delete().catch(()=>{}) } catch {}
         try {
-          const d = msnap.data() || {}
-          const dmId = d.dmMessageIds && d.dmMessageIds[userId]
-          if (dmId) { const u = await client.users.fetch(userId); const dm = await u.createDM(); const m = await dm.messages.fetch(dmId).catch(()=>null); if (m && m.deletable) await m.delete().catch(()=>{}) }
+          const updated = await mref.get()
+          const d = updated.data() || {}
+          const playersRaw = playersFromTimes(d).length ? playersFromTimes(d) : playerList(d)
+          const acceptMap = d.playerAcceptances || {}
+          const players = []
+          for (let p of playersRaw) {
+            let obj = typeof p === 'object' ? { ...p } : { nome: String(p||'') }
+            const uidIt = obj.uid || null
+            if (uidIt) { try { const us = await userDoc(uidIt).get(); if (us.exists) { const ud = us.data()||{}; obj.tag = ud.tag || obj.tag; obj.nome = obj.nome || ud.nome || ud.playerName; obj.siteElo = ud.siteElo || obj.elo; obj.siteDivisao = ud.siteDivisao || obj.divisao; obj.role = obj.role || ud.roleAtribuida || ud.rolePrincipal } } catch {} }
+            players.push(obj)
+          }
+          const details = players.map((p) => { const nome = String(p.nome||'').trim(); const tag = String(p.tag||'').trim().replace(/^#/,''); const handle = tag ? `${nome}#${tag}` : nome; const puid = p.uid || null; const accepted = puid && acceptMap[puid] === 'accepted'; const mark = accepted ? '✅ ' : ''; const div = p.siteDivisao || p.divisao || ''; const lane = p.roleAtribuida || p.role || p.funcao || ''; const laneText = lane ? ` (${lane})` : ''; return `${mark}${handle} • ${div}${laneText}` }).join('\n')
+          const msg = interaction.message
+          if (msg) {
+            const until = d.timestampFim && d.timestampFim.toDate ? d.timestampFim.toDate() : null
+            const now = new Date()
+            const msLeft = until ? Math.max(0, until.getTime() - now.getTime()) : 30 * 1000
+            const secLeft = Math.ceil(msLeft / 1000)
+            const row = new ActionRowBuilder().addComponents(
+              new ButtonBuilder().setCustomId(`accept:${matchId}`).setLabel('Aceitar').setStyle(ButtonStyle.Success),
+              new ButtonBuilder().setCustomId(`decline:${matchId}`).setLabel('Recusar').setStyle(ButtonStyle.Danger)
+            )
+            const embed = new EmbedBuilder()
+              .setTitle('Partida encontrada — Fila aberta!')
+              .setColor(0x9B59B6)
+              .setDescription(`O prazo para aceitar a fila termina em ${secLeft} segundo(s).`)
+              .addFields({ name: 'Jogadores', value: details || '-' })
+              .setThumbnail('attachment://lollogo.png')
+              .setImage('attachment://background.png')
+            await msg.edit({ embeds: [embed], components: [row] })
+          }
+          await interaction.reply({ content: 'Aceite registrado.', ephemeral: true })
         } catch {}
-        try { await deleteReadyPrompt(matchId) } catch {}
       } else if (action === 'decline') {
         await mref.update({ [`playersReady.${userId}`]: false })
         if (uid) {
@@ -827,26 +911,26 @@ client.on('interactionCreate', async (interaction) => {
           const until = new Date(Date.now() + 15 * 60 * 1000)
           await userDoc(uid).set({ matchmakingBanUntil: admin.firestore.Timestamp.fromDate(until) }, { merge: true })
         }
-        const af = actionAsset('decline')
-        const files = af ? [af] : []
-        const udataSnap2 = uid ? await userDoc(uid).get() : null
-        const udata2 = udataSnap2 && udataSnap2.exists ? udataSnap2.data() : {}
-        const tagD = String(udata2.tag||'').trim().replace(/^#/,'')
-        const handleD = tagD ? `${udata2.playerName||udata2.nome||interaction.user.username}#${tagD}` : (udata2.playerName||udata2.nome||interaction.user.username)
-        const descD = ['Você recusou a partida.', `Jogador: ${handleD}`, `Menção: <@${userId}>`].join('\n')
-        const embed = new EmbedBuilder().setTitle('Recusar').setDescription(descD).setColor(0xED4245)
-        if (af) embed.setImage('attachment://recusar.png')
-        try { const userObj = await client.users.fetch(userId); await userObj.send({ embeds: [embed], files }) } catch {}
-        try { await interaction.reply({ content: 'Confirmação enviada no seu DM.', ephemeral: true }); setTimeout(()=>{ interaction.deleteReply().catch(()=>{}) }, 8000) } catch {}
-        try { if (interaction.message && interaction.message.deletable) await interaction.message.delete().catch(()=>{}) } catch {}
         try {
-          const d = msnap.data() || {}
-          const dmId = d.dmMessageIds && d.dmMessageIds[userId]
-          if (dmId) { const u = await client.users.fetch(userId); const dm = await u.createDM(); const m = await dm.messages.fetch(dmId).catch(()=>null); if (m && m.deletable) await m.delete().catch(()=>{}) }
+          await mref.set({ status: 'cancelled', cancelledAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true })
+          await deleteReadyPrompt(matchId)
+          const others = Array.isArray(matchData.uids) ? matchData.uids.filter(u => u !== uid) : []
+          // Devolver demais para a fila (garantir presença)
+          for (const ouid of others) {
+            const exists = await isInQueue(ouid)
+            if (!exists) {
+              const usnap = await userDoc(ouid).get()
+              const ud = usnap.exists ? usnap.data() : {}
+              const rank = await getRankingForUser(ud)
+              const nomeBase = ud.playerName || ud.nome || ''
+              const payload = userToQueueData(ouid, { ...ud, nome: nomeBase, siteElo: rank.siteElo, siteDivisao: rank.siteDivisao })
+              await queueDoc(ouid).set(payload)
+            }
+          }
+          await interaction.reply({ content: 'Você recusou. Partida cancelada e fila ajustada.', ephemeral: true })
         } catch {}
-        try { await deleteReadyPrompt(matchId) } catch {}
       }
-  }
+    }
     }
     if (interaction.isButton()) {
       const cid = interaction.customId || ''
@@ -1071,7 +1155,7 @@ async function publishDiscordConfig() {
       .setDescription([
         '• Use "Entrar na Fila" para começar a procurar partidas. Se já estiver na fila, use "Sair da Fila".',
         '• Clique em "Perfil" para ver seu Elo, Divisão, roles e status da fila.',
-        '• Ao montar uma partida, você receberá uma DM com botões para Aceitar/Recusar. Também publicamos o Ready Check aqui.',
+        '• Ao montar uma partida, publicamos o Ready Check aqui com botões de Aceitar/Recusar.',
         '• O Resultado da partida será anunciado com link para o histórico.'
       ].join('\n'))
     const queueRow = new ActionRowBuilder().addComponents(
@@ -1139,48 +1223,7 @@ async function sendReadyCheckNotifications(doc) {
       return d && d.discordUserId ? d.discordUserId : null
     } catch { return null }
   }
-  for (let p of players) {
-    let id = typeof p === 'string' ? p : p.discordUserId || p.id || p.userId
-    if (!id && typeof p === 'object' && p.uid) { id = await resolveIdByUid(p.uid) }
-    let uid = typeof p === 'object' ? (p.uid || null) : null
-    if (!uid && id) { const resolved = await resolveUidByDiscordId(id); uid = resolved || null }
-    const prefs = uid ? await getNotificationPrefs(uid) : { ready: true }
-    if (!prefs.ready) continue
-    if (!id && typeof p === 'object') { if (p.discordUsername) id = resolveIdByUsername(p.discordUsername); if (!id && p.discordGlobalName) id = resolveIdByUsername(p.discordGlobalName) }
-    if (!id) continue
-    try {
-      const user = await client.users.fetch(id)
-      // enrich players with nome/tag/elo/div/role from users
-      const enriched = []
-      for (const it of players) {
-        let obj = typeof it === 'object' ? { ...it } : { nome: String(it||'') }
-        const uidIt = obj.uid || null
-        if (uidIt) {
-          try { const us = await userDoc(uidIt).get(); if (us.exists) { const ud = us.data()||{}; obj.tag = ud.tag || obj.tag; obj.nome = obj.nome || ud.nome || ud.playerName; obj.siteElo = ud.siteElo || obj.elo; obj.siteDivisao = ud.siteDivisao || obj.divisao; obj.role = obj.role || ud.roleAtribuida || ud.rolePrincipal } } catch {}
-        }
-        enriched.push(obj)
-      }
-      const details = formatPlayersResult(enriched, '', false)
-      const until = data.timestampFim && data.timestampFim.toDate ? data.timestampFim.toDate() : null
-      const now = new Date()
-      const msLeft = until ? Math.max(0, until.getTime() - now.getTime()) : 30 * 1000
-      const secLeft = Math.ceil(msLeft / 1000)
-      const rowForUser = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`accept:${doc.id}:${id}`).setLabel('Aceitar Partida').setStyle(ButtonStyle.Success),
-        new ButtonBuilder().setCustomId(`decline:${doc.id}:${id}`).setLabel('Recusar Partida').setStyle(ButtonStyle.Danger)
-      )
-      const embed = new EmbedBuilder()
-        .setTitle('Partida encontrada — Fila aberta!')
-        .setColor(0x9B59B6)
-        .setDescription(`O prazo para aceitar a fila termina em ${secLeft} segundo(s).\n${joinBase(siteBase, 'queue.html')}`)
-        .addFields({ name: 'Jogadores', value: details || '-' })
-        .setThumbnail('attachment://lollogo.png')
-        .setImage('attachment://background.png')
-      const sent = await user.send({ embeds: [embed], components: [rowForUser], files: brandAssets() })
-      try { await doc.ref.set({ [`dmMessageIds.${id}`]: sent.id }, { merge: true }) } catch {}
-      metrics.dmsSent++
-    } catch (e) { metrics.dmsFailed++ }
-  }
+  // DMs desativadas: apenas anúncio no canal público
   const channel = await getQueueChannel()
   // Canal de destino para Ready Check: agora é sempre o canal de queue
   const targetChannel = channel
@@ -1200,7 +1243,20 @@ async function sendReadyCheckNotifications(doc) {
         players.push(obj)
       }
       await ensureGuildEmojisForChannel(targetChannel)
-      const details = formatPlayersResult(players, '', true, targetChannel.guild?.id)
+      const acceptMap = data.playerAcceptances || {}
+      const details = players.map((p) => {
+        const nome = String((typeof p === 'object' ? p.nome : p) || '').trim()
+        const tag = String((typeof p === 'object' ? p.tag : '') || '').trim().replace(/^#/, '')
+        const handle = tag ? `${nome}#${tag}` : nome
+        const uid = typeof p === 'object' ? (p.uid || null) : null
+        const accepted = uid && acceptMap[uid] === 'accepted'
+        const mark = accepted ? '✅ ' : ''
+        const elo = p.siteElo || p.elo || '-'
+        const div = p.siteDivisao || p.divisao || ''
+        const lane = p.roleAtribuida || p.role || p.funcao || ''
+        const laneText = lane ? ` (${lane})` : ''
+        return `${mark}${handle} • ${div}${laneText}`.trim()
+      }).join('\n')
       const until = data.timestampFim && data.timestampFim.toDate ? data.timestampFim.toDate() : null
       const now = new Date()
       const msLeft = until ? Math.max(0, until.getTime() - now.getTime()) : 30 * 1000
@@ -1259,17 +1315,25 @@ function scheduleReadyTimeout(matchId, expireMs) {
         if (!['readyCheck','pending','Aberta'].includes(st)) return
         // delete channel prompt
         try { await deleteReadyPrompt(matchId) } catch {}
-        // delete DM prompts and notify timeout
-        const dmMap = d.dmMessageIds || {}
-        for (const [discordId, msgId] of Object.entries(dmMap)) {
-          try {
-            const user = await client.users.fetch(discordId)
-            const dm = await user.createDM()
-            const msg = await dm.messages.fetch(msgId).catch(()=>null)
-            if (msg && msg.deletable) await msg.delete().catch(()=>{})
-            await user.send({ content: 'Ready Check expirou (Timeout 30s).' })
-          } catch {}
-        }
+        // Ajuste da fila conforme regra: remover indecisos, devolver aceitos
+        const uids = Array.isArray(d.uids) ? d.uids : []
+        const acc = d.playerAcceptances || {}
+        const accepted = uids.filter(u => acc[u] === 'accepted')
+        const undecided = uids.filter(u => !acc[u])
+        try {
+          for (const u of undecided) { await queueDoc(u).delete().catch(()=>{}) }
+          for (const u of accepted) {
+            const exists = await isInQueue(u)
+            if (!exists) {
+              const usnap = await userDoc(u).get()
+              const ud = usnap.exists ? usnap.data() : {}
+              const rank = await getRankingForUser(ud)
+              const nomeBase = ud.playerName || ud.nome || ''
+              const payload = userToQueueData(u, { ...ud, nome: nomeBase, siteElo: rank.siteElo, siteDivisao: rank.siteDivisao })
+              await queueDoc(u).set(payload)
+            }
+          }
+        } catch {}
         await ref.set({ status: 'timeout', timeoutAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true })
       } catch {}
     }, delay)
