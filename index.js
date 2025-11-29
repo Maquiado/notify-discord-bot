@@ -529,6 +529,14 @@ async function resolveDiscordIdByUid(uid) { try { const snap = await userDoc(uid
 async function getRankingState(uid) { try { const snap = await userDoc(uid).get(); const d = snap.exists ? snap.data() : {}; return { tier: d.siteElo || d.elo || 'Ferro', divisao: d.siteDivisao || d.divisao || 'IV', xp: d.siteXP || 0 } } catch { return { tier: 'Ferro', divisao: 'IV', xp: 0 } }
 }
 
+async function getNotificationPrefs(uid){
+  try { const snap = await userDoc(uid).get(); const d = snap.exists ? snap.data() : {}; return {
+    ready: d.notifyReadyCheck !== false,
+    result: d.notifyResult !== false,
+    mvp: d.notifyMvp !== false
+  } } catch { return { ready: true, result: true, mvp: true } }
+}
+
 async function publishDiscordConfig() {
   const clientId = process.env.DISCORD_OAUTH_CLIENT_ID
   const redirectUri = process.env.DISCORD_OAUTH_REDIRECT_URI
@@ -609,6 +617,10 @@ async function sendReadyCheckNotifications(doc) {
     if (!id && typeof p === 'object' && p.uid) {
       id = await resolveIdByUid(p.uid)
     }
+    let uid = typeof p === 'object' ? (p.uid || null) : null
+    if (!uid && id) { const resolved = await resolveUidByDiscordId(id); uid = resolved || null }
+    const prefs = uid ? await getNotificationPrefs(uid) : { ready: true }
+    if (!prefs.ready) continue
     if (!id && typeof p === 'object') {
       if (p.discordUsername) id = resolveIdByUsername(p.discordUsername)
       if (!id && p.discordGlobalName) id = resolveIdByUsername(p.discordGlobalName)
@@ -673,13 +685,15 @@ async function sendFinalResult(doc) {
   const winnerStr = String(winner||'').trim().toLowerCase()
   const blueName = (teams?.blue?.nome || 'Time Azul').toString().trim().toLowerCase()
   const redName = (teams?.red?.nome || 'Time Vermelho').toString().trim().toLowerCase()
-  async function notifyTeam(list, isWin){
+  async function notifyTeam(list, isWin, teamLabel){
     if (!Array.isArray(list)) return
     for (const p of list) {
       let uid = typeof p === 'object' ? (p.uid || null) : null
       let discordId = typeof p === 'string' ? p : (p && typeof p === 'object' ? (p.discordUserId || p.id || p.userId) : null)
       if (!discordId && uid) discordId = await resolveDiscordIdByUid(uid)
       if (!discordId) continue
+      const prefs = uid ? await getNotificationPrefs(uid) : { result: true }
+      if (!prefs.result) continue
       try {
         const user = await client.users.fetch(discordId)
         const state = uid ? await getRankingState(uid) : { tier:'Ferro',divisao:'IV',xp:0 }
@@ -696,20 +710,28 @@ async function sendFinalResult(doc) {
         const isMvp = (String(p.nome||'').trim().toLowerCase() === String(mvpName1||'').trim().toLowerCase()) ||
                       (String(p.nome||'').trim().toLowerCase() === String(mvpName2||'').trim().toLowerCase())
         const mvpTxt = isMvp ? '\n🏆 Você foi o jogador mais honrado (MVP) nesta partida!' : ''
-        const msg = [
-          `Resultado da sua partida (${handle}): ${txt}`,
-          `XP: ${state.xp} → ${after.xp} (${deltaXp>=0?'+':''}${deltaXp})`,
-          promoTxt,
-          mvpTxt
-        ].filter(Boolean).join('\n')
-        await user.send({ content: msg })
+        const roleTxt = p.roleAtribuida || p.role || p.funcao ? ` • Role: ${p.roleAtribuida||p.role||p.funcao}` : ''
+        const base = sanitizeBaseUrl(process.env.MATCH_HISTORY_BASE_URL || process.env.SITE_BASE_URL || '')
+        const link = base ? (base.includes('?') ? `${base}&matchId=${doc.id}` : `${base}?matchId=${doc.id}`) : ''
+        const embed = new EmbedBuilder()
+          .setTitle(`Resultado: ${txt}`)
+          .addFields(
+            { name: 'Jogador', value: handle, inline: true },
+            { name: 'Time', value: teamLabel, inline: true },
+            { name: 'Role', value: (p.roleAtribuida||p.role||p.funcao||'-'), inline: true },
+            { name: 'XP', value: `${state.xp} → ${after.xp} (${deltaXp>=0?'+':''}${deltaXp})` },
+            { name: 'Elo', value: `${after.tier} ${after.divisao}` }
+          )
+        if (mvpTxt) embed.setFooter({ text: '🏆 MVP desta partida' })
+        const row = link ? new ActionRowBuilder().addComponents(new ButtonBuilder().setLabel('Ver Histórico').setStyle(ButtonStyle.Link).setURL(link)) : null
+        await user.send({ embeds: [embed], components: row ? [row] : [] })
       } catch {}
     }
   }
   const isBlueWin = winnerStr === blueName
   const isRedWin = winnerStr === redName
-  await notifyTeam(blue, isBlueWin)
-  await notifyTeam(red, isRedWin)
+  await notifyTeam(blue, isBlueWin, 'Time Azul')
+  await notifyTeam(red, isRedWin, 'Time Vermelho')
   try {
     const all = [].concat(blue || [], red || [])
     for (const p of all) { if (p && typeof p === 'object' && p.uid) { await queueDoc(p.uid).delete().catch(()=>{}) } }
@@ -873,6 +895,8 @@ async function sendMvpNotifications(doc) {
     let uid = p.uid || null
     let discordId = p.discordUserId || p.id || p.userId || null
     if (!discordId && uid) discordId = await resolveDiscordIdByUid(uid)
+    const prefs = uid ? await getNotificationPrefs(uid) : { mvp: true }
+    if (!prefs.mvp) return
     if (!discordId) return
     try { const user = await client.users.fetch(discordId); await user.send({ content: 'Parabéns! Você foi eleito MVP nesta partida. +MVP' }) } catch {}
   }
