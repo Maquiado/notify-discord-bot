@@ -14,8 +14,11 @@ const {
   SlashCommandBuilder,
   REST,
   Routes,
-  ChannelType
+  ChannelType,
+  AttachmentBuilder
 } = require('discord.js')
+const path = require('path')
+const fs = require('fs')
 
 function parseServiceAccount() {
   const raw = process.env.FIREBASE_SERVICE_ACCOUNT_JSON
@@ -113,6 +116,44 @@ async function ocrTextFromUrl(url) {
     const res = await Tesseract.recognize(url, 'eng', { logger: null })
     return res && res.data && res.data.text ? res.data.text : ''
   } catch { return '' }
+}
+
+function brandAssets() {
+  const files = []
+  const logoPath = path.join(__dirname, 'img', 'lollogo.png')
+  const bgPath = path.join(__dirname, 'img', 'background.png')
+  if (fs.existsSync(logoPath)) files.push(new AttachmentBuilder(logoPath, { name: 'lollogo.png' }))
+  if (fs.existsSync(bgPath)) files.push(new AttachmentBuilder(bgPath, { name: 'background.png' }))
+  return files
+}
+
+function actionAsset(kind) {
+  const fname = kind === 'accept' ? 'aceitar.png' : 'recusar.png'
+  const p = path.join(__dirname, 'img', fname)
+  if (fs.existsSync(p)) return new AttachmentBuilder(p, { name: fname })
+  return null
+}
+
+async function formatTeamsMentionsFromHistorico(matchId) {
+  try {
+    const ref = db.collection('historicoPartidas').doc(matchId)
+    const snap = await ref.get()
+    if (!snap.exists) return { blueStr: '-', redStr: '-' }
+    const d = snap.data() || {}
+    const blue = d.time1?.jogadores || d.times?.time1?.jogadores || []
+    const red = d.time2?.jogadores || d.times?.time2?.jogadores || []
+    async function enrich(list){
+      const out = []
+      for (const p of Array.isArray(list) ? list : []) {
+        const id = p.discordUserId || (p.uid ? await resolveDiscordIdByUid(p.uid) : null)
+        out.push({ ...p, discordUserId: id || p.discordUserId || null })
+      }
+      return out
+    }
+    const be = await enrich(blue)
+    const re = await enrich(red)
+    return { blueStr: formatPlayersResult(be, ''), redStr: formatPlayersResult(re, '') }
+  } catch { return { blueStr: '-', redStr: '-' } }
 }
 
 async function getMatchPlayerNames(matchId){
@@ -456,18 +497,24 @@ client.on('interactionCreate', async (interaction) => {
           payload.qtdJogadoresValidados = uniqueMatched.length
           await ref.set(payload, { merge: true })
           await interaction.reply({ content: `Resultado registrado: ${vencedor} (match_id: ${matchId}).`, ephemeral: true })
-          try {
-            const pub = new EmbedBuilder()
-              .setTitle('Resultado de Partida')
-              .addFields(
-                { name: 'match_id', value: `${matchId}`, inline: true },
-                { name: 'Vencedor', value: `${vencedor}`, inline: true },
-                { name: 'Validados', value: `${uniqueMatched.length} jogadores`, inline: true }
-              )
-              .setImage(att.url)
-              .setColor(0x57F287)
-            await interaction.channel.send({ embeds: [pub] })
-          } catch {}
+        try {
+          const teamsMentions = await formatTeamsMentionsFromHistorico(matchId)
+          const pub = new EmbedBuilder()
+            .setTitle('Resultado de Partida')
+            .addFields(
+              { name: 'match_id', value: `${matchId}`, inline: true },
+              { name: 'Vencedor', value: `${vencedor}`, inline: true },
+              { name: 'Validados', value: `${uniqueMatched.length} jogadores`, inline: true }
+            )
+            .addFields(
+              { name: 'Time Azul', value: teamsMentions.blueStr || '-', inline: true },
+              { name: 'Time Vermelho', value: teamsMentions.redStr || '-', inline: true }
+            )
+            .setImage(att.url)
+            .setColor(0x57F287)
+            .setThumbnail('attachment://lollogo.png')
+          await interaction.channel.send({ embeds: [pub], files: brandAssets() })
+        } catch {}
         } catch (e) {
           await interaction.reply({ content: 'Falha ao registrar resultado.', ephemeral: true })
         }
@@ -507,19 +554,24 @@ client.on('interactionCreate', async (interaction) => {
           payload.qtdJogadoresValidados = uniqueMatched.length
           await ref.set(payload, { merge: true })
           await interaction.reply({ content: `Resultado corrigido para ${vencedor} (match_id: ${matchId}).`, ephemeral: true })
-          try {
-            const pub = new EmbedBuilder()
-              .setTitle('Correção de Resultado')
-              .addFields(
-                { name: 'match_id', value: `${matchId}`, inline: true },
-                { name: 'Vencedor', value: `${vencedor}`, inline: true },
-                { name: 'Motivo', value: motivo || '—', inline: true },
-                { name: 'Validados', value: `${uniqueMatched.length} jogadores`, inline: true }
-              )
-              .setImage(att.url)
-              .setColor(0xFEE75C)
-            await interaction.channel.send({ embeds: [pub] })
-          } catch {}
+        try {
+          const pub = new EmbedBuilder()
+            .setTitle('Correção de Resultado')
+            .addFields(
+              { name: 'match_id', value: `${matchId}`, inline: true },
+              { name: 'Vencedor', value: `${vencedor}`, inline: true },
+              { name: 'Motivo', value: motivo || '—', inline: true },
+              { name: 'Validados', value: `${uniqueMatched.length} jogadores`, inline: true }
+            )
+            .addFields(
+              { name: 'Time Azul', value: (await formatTeamsMentionsFromHistorico(matchId)).blueStr || '-', inline: true },
+              { name: 'Time Vermelho', value: (await formatTeamsMentionsFromHistorico(matchId)).redStr || '-', inline: true }
+            )
+            .setImage(att.url)
+            .setColor(0xFEE75C)
+            .setThumbnail('attachment://lollogo.png')
+          await interaction.channel.send({ embeds: [pub], files: brandAssets() })
+        } catch {}
         } catch (e) {
           await interaction.reply({ content: 'Falha ao corrigir resultado.', ephemeral: true })
         }
@@ -595,7 +647,7 @@ client.on('interactionCreate', async (interaction) => {
       const data = usnap.exists ? usnap.data() : {}
       const rank = await getRankingForUser(data)
       const nomeBase = data.playerName || data.nome || (interaction.member && interaction.member.displayName) || interaction.user.username
-      const payload = userToQueueData(uid, { ...data, nome: nomeBase, siteElo: rank.siteElo, siteDivisao: rank.siteDivisao })
+      const payload = userToQueueData(uid, { ...data, nome: nomeBase, siteElo: rank.siteElo, siteDivisao: rank.siteDivisao, discordUserId: interaction.user.id, discordUsername: interaction.user.username })
       await db.collection('queue').doc(uid).set(payload)
       const msg = [
         'Você entrou na fila com sucesso.',
@@ -613,9 +665,9 @@ client.on('interactionCreate', async (interaction) => {
       const data = usnap.exists ? usnap.data() : {}
       const existing = await isInQueue(targetUid)
       if (!existing) {
-      const rank = await getRankingForUser(data)
-      const nomeBase = data.playerName || data.nome || (interaction.member && interaction.member.displayName) || interaction.user.username
-      const payload = userToQueueData(targetUid, { ...data, nome: nomeBase, siteElo: rank.siteElo, siteDivisao: rank.siteDivisao })
+        const rank = await getRankingForUser(data)
+        const nomeBase = data.playerName || data.nome || (interaction.member && interaction.member.displayName) || interaction.user.username
+        const payload = userToQueueData(targetUid, { ...data, nome: nomeBase, siteElo: rank.siteElo, siteDivisao: rank.siteDivisao, discordUserId: interaction.user.id, discordUsername: interaction.user.username })
         await db.collection('queue').doc(targetUid).set(payload)
         await interaction.reply({ content: 'Você entrou na fila!', ephemeral: true })
         try { setTimeout(()=>{ interaction.deleteReply().catch(()=>{}) }, 10000) } catch {}
@@ -671,7 +723,12 @@ client.on('interactionCreate', async (interaction) => {
       if (action === 'accept') {
         await mref.update({ [`playersReady.${userId}`]: true })
         if (uid) { await mref.update({ [`playerAcceptances.${uid}`]: 'accepted' }) }
-        await interaction.reply({ content: 'Você aceitou a partida.', ephemeral: true })
+        const af = actionAsset('accept')
+        const files = brandAssets()
+        if (af) files.push(af)
+        const embed = new EmbedBuilder().setTitle('Aceitar').setDescription('Você aceitou a partida.').setColor(0x57F287).setThumbnail('attachment://lollogo.png')
+        if (af) embed.setImage('attachment://aceitar.png')
+        await interaction.reply({ embeds: [embed], files, ephemeral: true })
         try { if (interaction.message && interaction.message.deletable) await interaction.message.delete().catch(()=>{}) } catch {}
       } else if (action === 'decline') {
         await mref.update({ [`playersReady.${userId}`]: false })
@@ -681,9 +738,14 @@ client.on('interactionCreate', async (interaction) => {
           const until = new Date(Date.now() + 15 * 60 * 1000)
           await userDoc(uid).set({ matchmakingBanUntil: admin.firestore.Timestamp.fromDate(until) }, { merge: true })
         }
-        await interaction.reply({ content: 'Você recusou a partida.', ephemeral: true })
+        const af = actionAsset('decline')
+        const files = brandAssets()
+        if (af) files.push(af)
+        const embed = new EmbedBuilder().setTitle('Recusar').setDescription('Você recusou a partida.').setColor(0xED4245).setThumbnail('attachment://lollogo.png')
+        if (af) embed.setImage('attachment://recusar.png')
+        await interaction.reply({ embeds: [embed], files, ephemeral: true })
         try { if (interaction.message && interaction.message.deletable) await interaction.message.delete().catch(()=>{}) } catch {}
-    }
+      }
   }
   }
   }
@@ -731,6 +793,8 @@ function userToQueueData(uid, d) {
     rolePrincipal,
     roleSecundaria,
     tag,
+    discordUserId: d.discordUserId || null,
+    discordUsername: d.discordUsername || '',
     source: 'queue',
     timestamp: admin.firestore.FieldValue.serverTimestamp()
   }
@@ -780,13 +844,15 @@ function formatPlayersResult(list, mvpName) {
       const nome = String(p.nome || '').trim()
       const tag = String(p.tag || '').trim().replace(/^#/, '')
       const handle = tag ? `${nome}#${tag}` : nome
+      const mention = p.discordUserId ? `<@${p.discordUserId}>` : ''
       const elo = p.siteElo || p.elo || '-'
       const div = p.siteDivisao || p.divisao || ''
       const lane = p.roleAtribuida || p.role || p.funcao || ''
       const isMvp = nome && nome.toLowerCase() === mvp
       const mvpBadge = isMvp ? ' • MVP' : ''
       const laneText = lane ? ` (${lane})` : ''
-      return `${handle} • ${elo} ${div}${laneText}${mvpBadge}`
+      const left = mention || handle
+      return `${left} • ${elo} ${div}${laneText}${mvpBadge}`
     })
     .join('\n')
 }
@@ -946,11 +1012,22 @@ async function sendReadyCheckNotifications(doc) {
     try {
       const user = await client.users.fetch(id)
       const details = formatPlayersResult(players, '')
+      const until = data.timestampFim && data.timestampFim.toDate ? data.timestampFim.toDate() : null
+      const now = new Date()
+      const msLeft = until ? Math.max(0, until.getTime() - now.getTime()) : 2 * 60 * 1000
+      const minLeft = Math.ceil(msLeft / 60000)
       const rowForUser = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(`accept:${doc.id}:${id}`).setLabel('Aceitar Partida').setStyle(ButtonStyle.Success),
         new ButtonBuilder().setCustomId(`decline:${doc.id}:${id}`).setLabel('Recusar Partida').setStyle(ButtonStyle.Danger)
       )
-      await user.send({ content: `READY CHECK! Sua partida foi encontrada!\n${details}\n${joinBase(siteBase, 'queue.html')}` , components: [rowForUser] })
+      const embed = new EmbedBuilder()
+        .setTitle('Partida encontrada — Fila aberta!')
+        .setColor(0x9B59B6)
+        .setDescription(`O prazo para aceitar a fila termina em ${minLeft} minuto(s).\n${joinBase(siteBase, 'queue.html')}`)
+        .addFields({ name: 'Jogadores', value: details || '-' })
+        .setThumbnail('attachment://lollogo.png')
+        .setImage('attachment://background.png')
+      await user.send({ embeds: [embed], components: [rowForUser], files: brandAssets() })
       metrics.dmsSent++
     } catch (e) { metrics.dmsFailed++ }
   }
@@ -959,9 +1036,33 @@ async function sendReadyCheckNotifications(doc) {
   const readyChannel = await getReadyChannel()
   const targetChannel = readyChannel || channel
   if (targetChannel) {
-    const playersStr = formatPlayersResult(players, '')
     try {
-      await targetChannel.send({ content: `Ready Check iniciado! ${playersStr}` })
+      const playersRaw = playersFromTimes(data).length ? playersFromTimes(data) : playerList(data)
+      const players = []
+      for (const p of playersRaw) {
+        let id = p && typeof p === 'object' ? (p.discordUserId || p.id || p.userId || null) : null
+        if (!id && p && typeof p === 'object' && p.uid) {
+          id = await resolveDiscordIdByUid(p.uid)
+        }
+        players.push({ ...(typeof p === 'object' ? p : { nome: String(p||'') }), discordUserId: id || null })
+      }
+      const details = formatPlayersResult(players, '')
+      const until = data.timestampFim && data.timestampFim.toDate ? data.timestampFim.toDate() : null
+      const now = new Date()
+      const msLeft = until ? Math.max(0, until.getTime() - now.getTime()) : 2 * 60 * 1000
+      const minLeft = Math.ceil(msLeft / 60000)
+      const embed = new EmbedBuilder()
+        .setTitle('Partida encontrada — Fila aberta!')
+        .setColor(0x9B59B6)
+        .setDescription(`O prazo para aceitar a fila termina em ${minLeft} minuto(s).`)
+        .addFields({ name: 'Jogadores', value: details || '-' })
+        .setThumbnail('attachment://lollogo.png')
+        .setImage('attachment://background.png')
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`accept:${doc.id}`).setLabel('Aceitar').setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId(`decline:${doc.id}`).setLabel('Recusar').setStyle(ButtonStyle.Danger)
+      )
+      await targetChannel.send({ embeds: [embed], components: [row], files: brandAssets() })
       metrics.channelAnnouncements++
     } catch (e) {
       console.error('Falha ao enviar mensagem de canal:', e?.message || e)
@@ -1121,25 +1222,33 @@ async function setupQueueChannelListeners() {
     async function renderAndSend(snapshot) {
       const players = []
       snapshot.forEach((doc) => { const d = doc.data() || {}; players.push(d) })
-      const lines = players.map((p) => {
-        const name = p.nome || '-'
+      const lines = []
+      for (const p of players.slice(0,50)) {
         const elo = p.elo || '-'
         const div = p.divisao || ''
         const role = p.rolePrincipal || p.role || ''
-        return `${name} • ${elo} ${div} ${role ? '('+role+')' : ''}`
-      })
-      const content = `Jogadores na fila:\n${lines.slice(0, 50).join('\n') || 'Nenhum jogador na fila.'}`
+        let handle = p.nome || '-'
+        let mention = ''
+        try {
+          const id = p.discordUserId || (p.uid ? await resolveDiscordIdByUid(p.uid) : null)
+          if (id) { mention = `<@${id}>`; handle = mention }
+        } catch {}
+        const line = `${handle} • ${elo} ${div} ${role ? '('+role+')' : ''}`
+        lines.push(line)
+      }
+      const description = lines.join('\n') || 'Nenhum jogador na fila.'
+      const embed = new EmbedBuilder().setTitle('Jogadores na Fila').setColor(0x5865F2).setDescription(description).setThumbnail('attachment://lollogo.png').setImage('attachment://background.png')
       try {
         if (messageId) {
           const msg = await ch.messages.fetch(messageId).catch(()=>null)
-          if (msg) { await msg.edit({ content }) ; return }
+          if (msg) { await msg.edit({ embeds: [embed] }) ; return }
         }
         const recent = await ch.messages.fetch({ limit: 10 }).catch(()=>null)
         if (recent) {
-          const mine = recent.find(m => m.author?.id === client.user?.id && String(m.content||'').startsWith('Jogadores na fila:'))
-          if (mine) { messageId = mine.id; await mine.edit({ content }); return }
+          const mine = recent.find(m => m.author?.id === client.user?.id && Array.isArray(m.embeds) && m.embeds[0]?.title === 'Jogadores na Fila')
+          if (mine) { messageId = mine.id; await mine.edit({ embeds: [embed] }); return }
         }
-        const sent = await ch.send({ content })
+        const sent = await ch.send({ embeds: [embed], files: brandAssets() })
         messageId = sent.id
       } catch {}
     }
