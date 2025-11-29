@@ -1118,9 +1118,8 @@ async function sendReadyCheckNotifications(doc) {
     } catch (e) { metrics.dmsFailed++ }
   }
   const channel = await getQueueChannel()
-  // Canal de destino para Ready Check: prioriza `DISCORD_READY_CHANNEL_ID`
-  const readyChannel = await getReadyChannel()
-  const targetChannel = readyChannel || channel
+  // Canal de destino para Ready Check: agora é sempre o canal de queue
+  const targetChannel = channel
   if (targetChannel) {
     try {
       const playersRaw = playersFromTimes(data).length ? playersFromTimes(data) : playerList(data)
