@@ -242,23 +242,12 @@ async function getMatchTeamNames(matchId){
 
 function detectWinnerFromText(text, team1Names, team2Names){
   const norm = normalizeText(text)
-  const hasVitoria = norm.includes('vitoria')
-  const hasDerrota = norm.includes('derrota')
-  if (!hasVitoria && !hasDerrota) return null
-  const i1 = norm.indexOf('equipe 1')
-  const i2 = norm.indexOf('equipe 2')
-  const slice1 = i1 >= 0 ? norm.slice(i1, i1 + 800) : norm
-  const slice2 = i2 >= 0 ? norm.slice(i2, i2 + 800) : norm
-  function countMatches(slice, names){
-    let c = 0
-    for (const n of names) { const nn = normalizeName(n); if (nn && nn.length >= 3 && slice.includes(nn)) c++ }
-    return c
-  }
-  const c1 = countMatches(slice1, team1Names)
-  const c2 = countMatches(slice2, team2Names)
+  function count(names){ let c = 0; for (const n of names) { const nn = normalizeName(n); if (nn && nn.length >= 3 && norm.includes(nn)) c++ } return c }
+  const c1 = count(team1Names)
+  const c2 = count(team2Names)
   if (c1 === 0 && c2 === 0) return null
-  if (hasVitoria) return c1 >= c2 ? 'time1' : 'time2'
-  if (hasDerrota) return c1 >= c2 ? 'time2' : 'time1'
+  if (c1 > c2) return 'time1'
+  if (c2 > c1) return 'time2'
   return null
 }
 
@@ -544,8 +533,8 @@ client.on('interactionCreate', async (interaction) => {
             return
           }
           const winnerSide = detectWinnerFromText(text, teams.t1, teams.t2)
-          console.log('[resultado]', new Date().toISOString(), 'winner detection', { winnerSide })
-          if (!winnerSide) { await interaction.editReply({ content: 'Não foi possível detectar VITÓRIA/DERROTA ou vincular ao lado. Envie um print da tela de fim de jogo com "VITÓRIA/DERROTA" visível.' }); return }
+          console.log('[resultado]', new Date().toISOString(), 'winner by names count', { winnerSide })
+          if (!winnerSide) { await interaction.editReply({ content: 'Não foi possível determinar o time vencedor a partir dos nomes do print. Use /corrigirresultado se necessário.' }); return }
           const vencedor = winnerSide === 'time1' ? teams.time1Name : teams.time2Name
           const payload = {
             vencedor,
