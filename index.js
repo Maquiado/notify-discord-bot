@@ -1256,7 +1256,7 @@ function scheduleReadyTimeout(matchId, expireMs) {
         if (!snap.exists) return
         const d = snap.data() || {}
         const st = d.status || 'readyCheck'
-        if (!['readyCheck','pending'].includes(st)) return
+        if (!['readyCheck','pending','Aberta'].includes(st)) return
         // delete channel prompt
         try { await deleteReadyPrompt(matchId) } catch {}
         // delete DM prompts and notify timeout
@@ -1371,7 +1371,7 @@ function setupMatchListeners() {
       const doc = change.doc
       const data = doc.data()
       if (!data) return
-      if (change.type === 'added' && (data.status === 'readyCheck' || data.status === 'pending')) {
+      if (change.type === 'added' && (data.status === 'readyCheck' || data.status === 'pending' || data.status === 'Aberta')) {
         const createdMs = docCreatedMs(data)
         const nowMs = Date.now()
         const windowMs = 10 * 60 * 1000
@@ -1379,7 +1379,7 @@ function setupMatchListeners() {
           sendReadyCheckNotifications(doc)
         }
       }
-      if ((change.type === 'modified' || change.type === 'added') && data.status && data.status !== 'readyCheck') {
+      if ((change.type === 'modified' || change.type === 'added') && data.status && !['readyCheck','pending','Aberta'].includes(data.status)) {
         (async () => {
           const mid = data.readyMessageId
           const chid = data.readyChannelId
