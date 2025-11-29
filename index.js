@@ -821,7 +821,32 @@ client.on('interactionCreate', async (interaction) => {
         try { await deleteReadyPrompt(matchId) } catch {}
       }
   }
-  }
+    }
+    if (interaction.isButton()) {
+      const cid = interaction.customId || ''
+      if (cid === 'resultado_help') {
+        const base = process.env.MATCH_HISTORY_BASE_URL || process.env.SITE_BASE_URL || ''
+        const chId = process.env.DISCORD_RESULTS_CHANNEL_ID || '1444182835975028848'
+        const msg = [
+          'Como enviar o resultado:',
+          '1) Copie o match_id na página Player → Histórico → Em andamento (botão Copiar).',
+          `2) No canal de Resultados (${chId}), execute /resultado e anexe o print.`,
+          `Página Player: ${joinBase(base,'player.html')}`
+        ].join('\n')
+        await interaction.reply({ content: msg, ephemeral: true })
+        return
+      }
+      if (cid === 'corrigirresultado_help') {
+        const chId = process.env.DISCORD_RESULTS_CHANNEL_ID || '1444182835975028848'
+        const msg = [
+          'Como corrigir o resultado:',
+          `1) No canal de Resultados (${chId}), execute /corrigirresultado com match_id, lado vencedor e anexe o print.`,
+          '2) Explique o motivo na opção Motivo (opcional).'
+        ].join('\n')
+        await interaction.reply({ content: msg, ephemeral: true })
+        return
+      }
+    }
   }
   catch (e) {
     console.error('Erro em interação', e)
@@ -999,6 +1024,8 @@ async function publishDiscordConfig() {
       const queueCh = await getQueueChannel()
       const linkChId = process.env.DISCORD_LINK_CHANNEL_ID
       const linkCh = linkChId ? await client.channels.fetch(linkChId).catch(()=>null) : null
+      const resultsChId = process.env.DISCORD_RESULTS_CHANNEL_ID || '1444182835975028848'
+      const resultsCh = resultsChId ? await client.channels.fetch(resultsChId).catch(()=>null) : null
 
     async function ensurePinned(channel, content, marker, components, embed){
       if (!channel || channel.type !== ChannelType.GuildText) return
@@ -1048,8 +1075,26 @@ async function publishDiscordConfig() {
       new ButtonBuilder().setCustomId('linkcode_start').setLabel('Gerar Código de Vínculo').setStyle(ButtonStyle.Secondary)
     )
     await ensurePinned(linkCh, linkContent, linkMarker, linkRow, linkEmbed)
-  } catch {}
-}
+
+    const resultsMarker = '📌 Guia de Resultados'
+    const resultsContent = '📌 Guia de Resultados'
+    const base = process.env.MATCH_HISTORY_BASE_URL || process.env.SITE_BASE_URL || ''
+    const resultsEmbed = new EmbedBuilder()
+      .setTitle('📌 Guia de Resultados — como enviar o print')
+      .setColor(0x57F287)
+      .setDescription([
+        '• Copie o match_id na página Player → Histórico → Em andamento (use o botão Copiar).',
+        `• No canal Resultados (${resultsChId}), use o comando /resultado com match_id e anexe o print.`,
+        '• Se precisar corrigir, use /corrigirresultado com vencedor e o mesmo print.',
+        `• Página Player: ${joinBase(base, 'player.html')}`
+      ].join('\n'))
+    const resultsRow = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('resultado_help').setLabel('Como enviar resultado').setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId('corrigirresultado_help').setLabel('Como corrigir resultado').setStyle(ButtonStyle.Secondary)
+    )
+    await ensurePinned(resultsCh, resultsContent, resultsMarker, resultsRow, resultsEmbed)
+    } catch {}
+  }
 
 async function sendReadyCheckNotifications(doc) {
   const data = doc.data()
