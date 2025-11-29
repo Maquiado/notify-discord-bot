@@ -787,6 +787,7 @@ client.on('interactionCreate', async (interaction) => {
         try { const userObj = await client.users.fetch(userId); await userObj.send({ embeds: [embed], files }) } catch {}
         try { await interaction.reply({ content: 'Confirmação enviada no seu DM.', ephemeral: true }); setTimeout(()=>{ interaction.deleteReply().catch(()=>{}) }, 8000) } catch {}
         try { if (interaction.message && interaction.message.deletable) await interaction.message.delete().catch(()=>{}) } catch {}
+        try { await deleteReadyPrompt(matchId) } catch {}
       } else if (action === 'decline') {
         await mref.update({ [`playersReady.${userId}`]: false })
         if (uid) {
@@ -807,6 +808,7 @@ client.on('interactionCreate', async (interaction) => {
         try { const userObj = await client.users.fetch(userId); await userObj.send({ embeds: [embed], files }) } catch {}
         try { await interaction.reply({ content: 'Confirmação enviada no seu DM.', ephemeral: true }); setTimeout(()=>{ interaction.deleteReply().catch(()=>{}) }, 8000) } catch {}
         try { if (interaction.message && interaction.message.deletable) await interaction.message.delete().catch(()=>{}) } catch {}
+        try { await deleteReadyPrompt(matchId) } catch {}
       }
   }
   }
@@ -906,7 +908,9 @@ function formatPlayersResult(list, mvpName, preferMention = false, guildId) {
       const nome = String(p.nome || '').trim()
       const tag = String(p.tag || '').trim().replace(/^#/, '')
       const handle = tag ? `${nome}#${tag}` : nome
-      const mention = p.discordUserId ? `<@${p.discordUserId}>` : ''
+      const idStr = p.discordUserId ? String(p.discordUserId) : ''
+      const isSnowflake = /^\d{17,20}$/.test(idStr)
+      const mention = isSnowflake ? `<@${idStr}>` : ''
       const elo = p.siteElo || p.elo || '-'
       const div = p.siteDivisao || p.divisao || ''
       const lane = p.roleAtribuida || p.role || p.funcao || ''
@@ -917,7 +921,7 @@ function formatPlayersResult(list, mvpName, preferMention = false, guildId) {
       const laneIcon = guildId ? emojiFor(guildId, laneKey) : ''
       const eloIcon = guildId ? emojiFor(guildId, eloKey) : ''
       const laneText = laneIcon || (lane ? ` (${lane})` : '')
-      const left = preferMention ? (mention ? `${handle} (${mention})` : handle) : handle
+      const left = preferMention ? (mention ? `${handle} ${mention}` : handle) : handle
       return `${eloIcon} ${laneIcon} ${left} • ${div}${mvpBadge}`.trim()
     })
     .join('\n')
@@ -1085,7 +1089,7 @@ async function sendReadyCheckNotifications(doc) {
       const details = formatPlayersResult(enriched, '', false)
       const until = data.timestampFim && data.timestampFim.toDate ? data.timestampFim.toDate() : null
       const now = new Date()
-      const msLeft = until ? Math.max(0, until.getTime() - now.getTime()) : 2 * 60 * 1000
+      const msLeft = until ? Math.max(0, until.getTime() - now.getTime()) : 1 * 60 * 1000
       const minLeft = Math.ceil(msLeft / 60000)
       const rowForUser = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(`accept:${doc.id}:${id}`).setLabel('Aceitar Partida').setStyle(ButtonStyle.Success),
@@ -1125,7 +1129,7 @@ async function sendReadyCheckNotifications(doc) {
       const details = formatPlayersResult(players, '', true, targetChannel.guild?.id)
       const until = data.timestampFim && data.timestampFim.toDate ? data.timestampFim.toDate() : null
       const now = new Date()
-      const msLeft = until ? Math.max(0, until.getTime() - now.getTime()) : 2 * 60 * 1000
+      const msLeft = until ? Math.max(0, until.getTime() - now.getTime()) : 1 * 60 * 1000
       const minLeft = Math.ceil(msLeft / 60000)
       const embed = new EmbedBuilder()
         .setTitle('Partida encontrada — Fila aberta!')
@@ -1148,6 +1152,20 @@ async function sendReadyCheckNotifications(doc) {
   await markAnnounced('ready', doc.id)
 }
 
+async function deleteReadyPrompt(matchId) {
+  try {
+    const ref = db.collection('aguardandoPartidas').doc(matchId)
+    const snap = await ref.get()
+    if (!snap.exists) return
+    const d = snap.data() || {}
+    const chid = d.readyChannelId
+    const mid = d.readyMessageId
+    if (chid && mid) {
+      try { const ch = await client.channels.fetch(chid).catch(()=>null); const msg = ch ? await ch.messages.fetch(mid).catch(()=>null) : null; if (msg && msg.deletable) await msg.delete().catch(()=>{}) } catch {}
+    }
+  } catch {}
+}
+
 async function sendFinalResult(doc) {
   const data = doc.data()
   if (!data || !data.vencedor) return
@@ -1158,12 +1176,15 @@ async function sendFinalResult(doc) {
   const teams = data.teams || { blue: data.timeAzul || data.teamBlue || data.time1, red: data.timeVermelho || data.teamRed || data.time2 }
   const blue = teams?.blue?.jogadores || teams?.team1?.jogadores || teams?.blue || []
   const red = teams?.red?.jogadores || teams?.team2?.jogadores || teams?.red || []
+  const channel = await getAnnounceChannel()
+  if (channel) { try { await ensureGuildEmojisForChannel(channel) } catch {} }
+  const gid = channel?.guild?.id
   const embed = new EmbedBuilder()
     .setTitle('Resultado da Partida')
     .addFields(
       { name: 'Time Vencedor', value: `${winner}` },
-      { name: 'Time Azul', value: formatPlayersResult(blue, data.mvpResult?.time1) || '-', inline: true },
-      { name: 'Time Vermelho', value: formatPlayersResult(red, data.mvpResult?.time2) || '-', inline: true }
+      { name: 'Time Azul', value: formatPlayersResult(blue, data.mvpResult?.time1, true, gid) || '-', inline: true },
+      { name: 'Time Vermelho', value: formatPlayersResult(red, data.mvpResult?.time2, true, gid) || '-', inline: true }
     )
   const base = sanitizeBaseUrl(process.env.MATCH_HISTORY_BASE_URL || process.env.SITE_BASE_URL || '')
   let link = ''
@@ -1171,7 +1192,6 @@ async function sendFinalResult(doc) {
     link = base.includes('?') ? `${base}&matchId=${doc.id}` : `${base}?matchId=${doc.id}`
   }
   if (link) embed.setFooter({ text: `Histórico: ${link}` })
-  const channel = await getAnnounceChannel()
   if (channel) {
     await channel.send({ embeds: [embed] })
   }
@@ -1306,24 +1326,11 @@ async function setupQueueChannelListeners() {
     const ch = await getQueueChannel()
     if (!ch) return
     let messageId = null
-    async function renderAndSend(snapshot) {
+  async function renderAndSend(snapshot) {
       const players = []
       snapshot.forEach((doc) => { const d = doc.data() || {}; players.push(d) })
-      const lines = []
-      for (const p of players.slice(0,50)) {
-        const elo = p.elo || '-'
-        const div = p.divisao || ''
-        const role = p.rolePrincipal || p.role || ''
-        let handle = p.nome || '-'
-        let mention = ''
-        try {
-          const id = p.discordUserId || (p.uid ? await resolveDiscordIdByUid(p.uid) : null)
-          if (id) { mention = `<@${id}>`; handle = mention }
-        } catch {}
-        const line = `${handle} • ${elo} ${div} ${role ? '('+role+')' : ''}`
-        lines.push(line)
-      }
-      const description = lines.join('\n') || 'Nenhum jogador na fila.'
+      await ensureGuildEmojisForChannel(ch)
+      const description = formatPlayersResult(players.slice(0,50), '', true, ch.guild?.id) || 'Nenhum jogador na fila.'
       const embed = new EmbedBuilder().setTitle('Jogadores na Fila').setColor(0x5865F2).setDescription(description).setThumbnail('attachment://lollogo.png').setImage('attachment://background.png')
       try {
         if (messageId) {
