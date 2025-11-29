@@ -114,7 +114,10 @@ function normalizeName(s){
 
 async function ocrTextFromUrl(url) {
   try {
-    const res = await Tesseract.recognize(url, 'eng', { logger: null })
+    const timeoutMs = Number(process.env.OCR_TIMEOUT_MS || '8000')
+    const p = Tesseract.recognize(url, 'eng')
+    const t = new Promise((_, reject) => setTimeout(() => reject(new Error('ocr_timeout')), timeoutMs))
+    const res = await Promise.race([p, t])
     return res && res.data && res.data.text ? res.data.text : ''
   } catch { return '' }
 }
@@ -326,19 +329,23 @@ async function getQueueChannel() {
 }
 
 client.once('ready', async () => {
+  try { console.log('[boot]', new Date().toISOString(), 'ready', { user: client.user?.tag }) } catch {}
   try {
     await registerCommands()
+    console.log('[boot]', new Date().toISOString(), 'commands registered')
   } catch (e) {
     console.error('Falha ao registrar comandos', e)
   }
   try { await publishDiscordConfig() } catch {}
   try { await ensurePinnedHelpMessages() } catch {}
   setupMatchListeners()
+  try { console.log('[boot]', new Date().toISOString(), 'listeners started') } catch {}
   startOAuthServer()
 })
 
 client.on('interactionCreate', async (interaction) => {
   try {
+    try { const name = interaction.isChatInputCommand() ? interaction.commandName : (interaction.isButton() ? interaction.customId : 'other'); console.log('[interaction]', new Date().toISOString(), { type: interaction.type, name, userId: interaction.user?.id }) } catch {}
     if (interaction.isChatInputCommand()) {
       if (interaction.commandName === 'fila') {
         const discordId = interaction.user.id
@@ -506,7 +513,7 @@ client.on('interactionCreate', async (interaction) => {
         const matchId = interaction.options.getString('match_id')
         const att = interaction.options.getAttachment('imagem')
         console.log('[resultado]', new Date().toISOString(), 'start', { userId: interaction.user.id, channelId: interaction.channelId, matchId })
-        await interaction.deferReply({ ephemeral: true })
+        if (!interaction.deferred && !interaction.replied) { try { await interaction.deferReply({ ephemeral: true }) } catch (e) { console.error('[resultado]', new Date().toISOString(), 'defer error', e && e.code, e && e.message) } }
         console.log('[resultado]', new Date().toISOString(), 'deferred')
         if (!matchId) { await interaction.editReply({ content: 'Informe o match_id.' }); return }
         if (!att || !att.url) { await interaction.editReply({ content: 'Anexe o print da partida (imagem).' }); return }
@@ -584,7 +591,7 @@ client.on('interactionCreate', async (interaction) => {
         const motivo = interaction.options.getString('motivo') || ''
         const att = interaction.options.getAttachment('imagem')
         console.log('[corrigirresultado]', new Date().toISOString(), 'start', { userId: interaction.user.id, channelId: interaction.channelId, matchId, vencedorOpt, motivoLen: String(motivo||'').length })
-        await interaction.deferReply({ ephemeral: true })
+        if (!interaction.deferred && !interaction.replied) { try { await interaction.deferReply({ ephemeral: true }) } catch (e) { console.error('[corrigirresultado]', new Date().toISOString(), 'defer error', e && e.code, e && e.message) } }
         console.log('[corrigirresultado]', new Date().toISOString(), 'deferred')
         if (!matchId || !vencedorOpt) { await interaction.editReply({ content: 'Parâmetros inválidos.' }); return }
         if (!att || !att.url) { await interaction.editReply({ content: 'Anexe o print da partida (imagem).' }); return }
@@ -861,11 +868,15 @@ client.on('interactionCreate', async (interaction) => {
   }
   catch (e) {
     console.error('Erro em interação', e)
-    if (interaction.isRepliable()) {
-      try {
-        await interaction.reply({ content: 'Ocorreu um erro.', ephemeral: true })
-      } catch {}
-    }
+    try {
+      if (interaction.isRepliable()) {
+        if (interaction.deferred || interaction.replied) {
+          try { await interaction.editReply({ content: 'Ocorreu um erro.' }) } catch {}
+        } else {
+          try { await interaction.reply({ content: 'Ocorreu um erro.', ephemeral: true }) } catch {}
+        }
+      }
+    } catch {}
   }
 })
 
@@ -1647,6 +1658,8 @@ async function logGuildInfo() {
 }
 
 client.login(token)
+process.on('unhandledRejection', (e) => { try { console.error('[unhandledRejection]', new Date().toISOString(), e && e.stack ? e.stack : e) } catch {} })
+process.on('uncaughtException', (e) => { try { console.error('[uncaughtException]', new Date().toISOString(), e && e.stack ? e.stack : e) } catch {} })
 function sanitizeBaseUrl(s) {
   if (!s) return ''
   let v = String(s).trim()
