@@ -774,6 +774,7 @@ client.on('interactionCreate', async (interaction) => {
           { name: 'Status da Fila', value: inQueue ? 'Na fila' : 'Fora da fila', inline: true }
         )
       await interaction.reply({ embeds: [embed], ephemeral: true })
+      try { setTimeout(()=>{ interaction.deleteReply().catch(()=>{}) }, 10000) } catch {}
       return
     }
     if ((action === 'accept' || action === 'decline') && targetUserId && targetUserId !== userId) {
@@ -813,6 +814,7 @@ client.on('interactionCreate', async (interaction) => {
         '• Para sair, clique em "Sair da Fila" ou use o comando /fila.'
       ].join('\n')
       await interaction.reply({ content: msg, ephemeral: true })
+      try { setTimeout(()=>{ interaction.deleteReply().catch(()=>{}) }, 5000) } catch {}
       return
     }
     if (action === 'queue_confirm_join') {
@@ -828,10 +830,10 @@ client.on('interactionCreate', async (interaction) => {
         const payload = userToQueueData(targetUid, { ...data, nome: nomeBase, siteElo: rank.siteElo, siteDivisao: rank.siteDivisao, discordUserId: interaction.user.id, discordUsername: interaction.user.username })
         await db.collection('queue').doc(targetUid).set(payload)
         await interaction.reply({ content: 'Você entrou na fila!', ephemeral: true })
-        try { setTimeout(()=>{ interaction.deleteReply().catch(()=>{}) }, 10000) } catch {}
+        try { setTimeout(()=>{ interaction.deleteReply().catch(()=>{}) }, 5000) } catch {}
       } else {
         await interaction.reply({ content: 'Você já está na fila.', ephemeral: true })
-        try { setTimeout(()=>{ interaction.deleteReply().catch(()=>{}) }, 10000) } catch {}
+        try { setTimeout(()=>{ interaction.deleteReply().catch(()=>{}) }, 5000) } catch {}
       }
       return
     }
@@ -845,7 +847,7 @@ client.on('interactionCreate', async (interaction) => {
         await Promise.all(dels)
       } catch {}
       await interaction.reply({ content: 'Você saiu da fila.', ephemeral: true })
-      try { setTimeout(()=>{ interaction.deleteReply().catch(()=>{}) }, 10000) } catch {}
+      try { setTimeout(()=>{ interaction.deleteReply().catch(()=>{}) }, 5000) } catch {}
       return
     }
     if (action === 'queue_leave') {
@@ -860,7 +862,9 @@ client.on('interactionCreate', async (interaction) => {
         'Você saiu da fila.',
         '• Quando quiser retornar, clique em "Entrar na Fila" ou use o comando /fila.'
       ].join('\n')
-      await interaction.reply({ content: msg, ephemeral: true }); return
+      await interaction.reply({ content: msg, ephemeral: true });
+      try { setTimeout(()=>{ interaction.deleteReply().catch(()=>{}) }, 5000) } catch {}
+      return
     }
     if (action === 'queue_confirm_join' || action === 'queue_confirm_leave' || action === 'queue_join' || action === 'queue_leave') {
       try {
