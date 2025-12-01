@@ -454,8 +454,8 @@ client.on('interactionCreate', async (interaction) => {
           .setTitle('Perfil do Jogador')
           .addFields(
             { name: 'Nome', value: `${nomeBase}` , inline: true },
-            { name: 'Elo', value: `${rank.siteElo ?? '-'}`, inline: true },
-            { name: 'Divisão', value: `${rank.siteDivisao ?? '-'}`, inline: true },
+            { name: 'Elo', value: `${rank.elo ?? '-'}`, inline: true },
+            { name: 'Divisão', value: `${rank.divisao ?? '-'}`, inline: true },
             { name: 'Role Principal', value: `${data.rolePrincipal ?? '-'}`, inline: true },
             { name: 'Role Secundária', value: `${data.roleSecundaria ?? '-'}`, inline: true },
             { name: 'Status da Fila', value: inQueue ? 'Na fila' : 'Fora da fila', inline: true }
@@ -767,8 +767,8 @@ client.on('interactionCreate', async (interaction) => {
         .setTitle('Perfil do Jogador')
         .addFields(
           { name: 'Nome', value: `${nomeBase}` , inline: true },
-          { name: 'Elo', value: `${rank.siteElo ?? '-'}`, inline: true },
-          { name: 'Divisão', value: `${rank.siteDivisao ?? '-'}`, inline: true },
+          { name: 'Elo', value: `${rank.elo ?? '-'}`, inline: true },
+          { name: 'Divisão', value: `${rank.divisao ?? '-'}`, inline: true },
           { name: 'Role Principal', value: `${data.rolePrincipal ?? '-'}`, inline: true },
           { name: 'Role Secundária', value: `${data.roleSecundaria ?? '-'}`, inline: true },
           { name: 'Status da Fila', value: inQueue ? 'Na fila' : 'Fora da fila', inline: true }
@@ -806,7 +806,7 @@ client.on('interactionCreate', async (interaction) => {
       const data = usnap.exists ? usnap.data() : {}
       const rank = await getRankingForUser(data)
       const nomeBase = data.playerName || data.nome || (interaction.member && interaction.member.displayName) || interaction.user.username
-      const payload = userToQueueData(uid, { ...data, nome: nomeBase, siteElo: rank.siteElo, siteDivisao: rank.siteDivisao, discordUserId: interaction.user.id, discordUsername: interaction.user.username })
+      const payload = userToQueueData(uid, { ...data, nome: nomeBase, elo: rank.elo, divisao: rank.divisao, discordUserId: interaction.user.id, discordUsername: interaction.user.username })
       await db.collection('queue').doc(uid).set(payload)
       const msg = [
         'Você entrou na fila com sucesso.',
@@ -827,7 +827,7 @@ client.on('interactionCreate', async (interaction) => {
       if (!existing) {
         const rank = await getRankingForUser(data)
         const nomeBase = data.playerName || data.nome || (interaction.member && interaction.member.displayName) || interaction.user.username
-        const payload = userToQueueData(targetUid, { ...data, nome: nomeBase, siteElo: rank.siteElo, siteDivisao: rank.siteDivisao, discordUserId: interaction.user.id, discordUsername: interaction.user.username })
+        const payload = userToQueueData(targetUid, { ...data, nome: nomeBase, elo: rank.elo, divisao: rank.divisao, discordUserId: interaction.user.id, discordUsername: interaction.user.username })
         await db.collection('queue').doc(targetUid).set(payload)
         await interaction.reply({ content: 'Você entrou na fila!', ephemeral: true })
         try { setTimeout(()=>{ interaction.deleteReply().catch(()=>{}) }, 5000) } catch {}
@@ -894,10 +894,10 @@ client.on('interactionCreate', async (interaction) => {
           for (let p of playersRaw) {
             let obj = typeof p === 'object' ? { ...p } : { nome: String(p||'') }
             const uidIt = obj.uid || null
-            if (uidIt) { try { const us = await userDoc(uidIt).get(); if (us.exists) { const ud = us.data()||{}; obj.tag = ud.tag || obj.tag; obj.nome = obj.nome || ud.nome || ud.playerName; obj.siteElo = ud.siteElo || obj.elo; obj.siteDivisao = ud.siteDivisao || obj.divisao; obj.role = obj.role || ud.roleAtribuida || ud.rolePrincipal } } catch {} }
+            if (uidIt) { try { const us = await userDoc(uidIt).get(); if (us.exists) { const ud = us.data()||{}; obj.tag = ud.tag || obj.tag; obj.nome = obj.nome || ud.nome || ud.playerName; obj.elo = ud.elo || obj.elo; obj.divisao = ud.divisao || obj.divisao; obj.role = obj.role || ud.roleAtribuida || ud.rolePrincipal } } catch {} }
             players.push(obj)
           }
-          const details = players.map((p) => { const nome = String(p.nome||'').trim(); const tag = String(p.tag||'').trim().replace(/^#/,''); const handle = tag ? `${nome}#${tag}` : nome; const puid = p.uid || null; const accepted = puid && acceptMap[puid] === 'accepted'; const mark = accepted ? '✅ ' : ''; const div = p.siteDivisao || p.divisao || ''; const lane = p.roleAtribuida || p.role || p.funcao || ''; const laneText = lane ? ` (${lane})` : ''; return `${mark}${handle} • ${div}${laneText}` }).join('\n')
+          const details = players.map((p) => { const nome = String(p.nome||'').trim(); const tag = String(p.tag||'').trim().replace(/^#/,''); const handle = tag ? `${nome}#${tag}` : nome; const puid = p.uid || null; const accepted = puid && acceptMap[puid] === 'accepted'; const mark = accepted ? '✅ ' : ''; const div = p.divisao || ''; const lane = p.roleAtribuida || p.role || p.funcao || ''; const laneText = lane ? ` (${lane})` : ''; return `${mark}${handle} • ${div}${laneText}` }).join('\n')
           const msg = interaction.message
           if (msg) {
             const until = d.timestampFim && d.timestampFim.toDate ? d.timestampFim.toDate() : null
@@ -979,7 +979,7 @@ client.on('interactionCreate', async (interaction) => {
               const ud = usnap.exists ? usnap.data() : {}
               const rank = await getRankingForUser(ud)
               const nomeBase = ud.playerName || ud.nome || ''
-              const payload = userToQueueData(ouid, { ...ud, nome: nomeBase, siteElo: rank.siteElo, siteDivisao: rank.siteDivisao })
+              const payload = userToQueueData(ouid, { ...ud, nome: nomeBase, elo: rank.elo, divisao: rank.divisao })
               await queueDoc(ouid).set(payload)
             }
           }
@@ -1041,8 +1041,8 @@ function playersFromTimes(data) {
 
 function userToQueueData(uid, d) {
   const nome = d.nome || d.playerName || ''
-  const elo = d.siteElo || d.elo || 'Ferro'
-  const divisao = d.siteDivisao || d.divisao || 'IV'
+  const elo = d.elo || 'Ferro'
+  const divisao = d.divisao || 'IV'
   const rolePrincipal = d.rolePrincipal || 'Preencher'
   const roleSecundaria = d.roleSecundaria || 'Preencher'
   const tag = d.tag ? (String(d.tag).startsWith('#') ? d.tag : `#${d.tag}`) : ''
@@ -1063,13 +1063,18 @@ function userToQueueData(uid, d) {
 
 async function getRankingForUser(d) {
   try {
+    if (d && d.uid) {
+      const us = await userDoc(d.uid).get(); const ud = us.exists ? us.data() : {};
+      return { elo: ud.elo || 'Ferro', divisao: ud.divisao || 'IV' };
+    }
     const baseName = (d.nome || d.playerName || d.apelido_conta || '').toLowerCase().trim()
-    if (!baseName) return { siteElo: d.siteElo || d.elo || 'Ferro', siteDivisao: d.siteDivisao || d.divisao || 'IV' }
-    const rsnap = await db.collection('ranking').doc(baseName).get()
-    if (!rsnap.exists) return { siteElo: d.siteElo || d.elo || 'Ferro', siteDivisao: d.siteDivisao || d.divisao || 'IV' }
-    const r = rsnap.data() || {}
-    return { siteElo: r.siteElo || d.siteElo || d.elo || 'Ferro', siteDivisao: r.siteDivisao || d.siteDivisao || d.divisao || 'IV' }
-  } catch { return { siteElo: d.siteElo || d.elo || 'Ferro', siteDivisao: d.siteDivisao || d.divisao || 'IV' } }
+    if (!baseName) return { elo: d.elo || 'Ferro', divisao: d.divisao || 'IV' }
+    const qNome = await db.collection('users').where('nome','==', baseName).limit(1).get()
+    if (!qNome.empty) { const ud = qNome.docs[0].data() || {}; return { elo: ud.elo || 'Ferro', divisao: ud.divisao || 'IV' } }
+    const qPlayer = await db.collection('users').where('playerName','==', baseName).limit(1).get()
+    if (!qPlayer.empty) { const ud = qPlayer.docs[0].data() || {}; return { elo: ud.elo || 'Ferro', divisao: ud.divisao || 'IV' } }
+    return { elo: d.elo || 'Ferro', divisao: d.divisao || 'IV' }
+  } catch { return { elo: d.elo || 'Ferro', divisao: d.divisao || 'IV' } }
 }
 
 async function isInQueue(uid) {
@@ -1108,8 +1113,8 @@ function formatPlayersResult(list, mvpName, preferMention = false, guildId) {
       const idStr = p.discordUserId ? String(p.discordUserId) : ''
       const isSnowflake = /^\d{17,20}$/.test(idStr)
       const mention = isSnowflake ? `<@${idStr}>` : ''
-      const elo = p.siteElo || p.elo || '-'
-      const div = p.siteDivisao || p.divisao || ''
+      const elo = p.elo || '-'
+      const div = p.divisao || ''
       const lane = p.roleAtribuida || p.role || p.funcao || ''
       const isMvp = nome && nome.toLowerCase() === mvp
       const mvpBadge = isMvp ? ' • MVP' : ''
@@ -1162,7 +1167,7 @@ function aplicarXp(tier, divisao, xp, isWin) {
 }
 
 async function resolveDiscordIdByUid(uid) { try { const snap = await userDoc(uid).get(); const d = snap.exists ? snap.data() : {}; return d.discordUserId || null } catch { return null } }
-async function getRankingState(uid) { try { const snap = await userDoc(uid).get(); const d = snap.exists ? snap.data() : {}; return { tier: d.siteElo || d.elo || 'Ferro', divisao: d.siteDivisao || d.divisao || 'IV', xp: d.siteXP || 0 } } catch { return { tier: 'Ferro', divisao: 'IV', xp: 0 } }
+async function getRankingState(uid) { try { const snap = await userDoc(uid).get(); const d = snap.exists ? snap.data() : {}; return { tier: d.elo || 'Ferro', divisao: d.divisao || 'IV', xp: d.xp || 0 } } catch { return { tier: 'Ferro', divisao: 'IV', xp: 0 } }
 }
 
 async function getNotificationPrefs(uid){
@@ -1294,7 +1299,7 @@ async function sendReadyCheckNotifications(doc) {
         obj.discordUserId = id || null
         const uidIt = obj.uid || null
         if (uidIt) {
-          try { const us = await userDoc(uidIt).get(); if (us.exists) { const ud = us.data()||{}; obj.tag = ud.tag || obj.tag; obj.nome = obj.nome || ud.nome || ud.playerName; obj.siteElo = ud.siteElo || obj.elo; obj.siteDivisao = ud.siteDivisao || obj.divisao; obj.role = obj.role || ud.roleAtribuida || ud.rolePrincipal } } catch {}
+          try { const us = await userDoc(uidIt).get(); if (us.exists) { const ud = us.data()||{}; obj.tag = ud.tag || obj.tag; obj.nome = obj.nome || ud.nome || ud.playerName; obj.elo = ud.elo || obj.elo; obj.divisao = ud.divisao || obj.divisao; obj.role = obj.role || ud.roleAtribuida || ud.rolePrincipal } } catch {}
         }
         players.push(obj)
       }
@@ -1307,8 +1312,8 @@ async function sendReadyCheckNotifications(doc) {
         const uid = typeof p === 'object' ? (p.uid || null) : null
         const accepted = uid && acceptMap[uid] === 'accepted'
         const mark = accepted ? '✅ ' : ''
-        const elo = p.siteElo || p.elo || '-'
-        const div = p.siteDivisao || p.divisao || ''
+        const elo = p.elo || '-'
+        const div = p.divisao || ''
         const lane = p.roleAtribuida || p.role || p.funcao || ''
         const laneText = lane ? ` (${lane})` : ''
         return `${mark}${handle} • ${div}${laneText}`.trim()
@@ -1385,7 +1390,7 @@ function scheduleReadyTimeout(matchId, expireMs) {
               const ud = usnap.exists ? usnap.data() : {}
               const rank = await getRankingForUser(ud)
               const nomeBase = ud.playerName || ud.nome || ''
-              const payload = userToQueueData(u, { ...ud, nome: nomeBase, siteElo: rank.siteElo, siteDivisao: rank.siteDivisao })
+              const payload = userToQueueData(u, { ...ud, nome: nomeBase, elo: rank.elo, divisao: rank.divisao })
               await queueDoc(u).set(payload)
             }
           }
