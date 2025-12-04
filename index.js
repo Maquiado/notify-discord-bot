@@ -403,7 +403,7 @@ async function getQueueChannel() {
   return await getAnnounceChannel()
 }
 
-client.once('ready', async () => {
+async function onClientReady() {
   try { console.log('[boot]', new Date().toISOString(), 'ready', { user: client.user?.tag }) } catch {}
   try { ga.trackEvent('bot_ready', { tag: client.user?.tag || '' }) } catch {}
   try {
@@ -417,7 +417,9 @@ client.once('ready', async () => {
   setupMatchListeners()
   try { console.log('[boot]', new Date().toISOString(), 'listeners started') } catch {}
   startOAuthServer()
-})
+}
+client.once('ready', onClientReady)
+client.once('clientReady', onClientReady)
 
 client.on('interactionCreate', async (interaction) => {
   try {
@@ -503,9 +505,17 @@ client.on('interactionCreate', async (interaction) => {
         const uid = await resolveUidByDiscordId(discordId)
         if (!uid) { await interaction.reply({ content: 'Vincule seu Discord ao site com /linkuid ou /linkcode para ver pendências.', ephemeral: true }); return }
         const col = db.collection('aguardandoPartidas')
-        const qsnap = await col.where('status','==','readyCheck').where('uids','array-contains', uid).orderBy('createdAt','desc').limit(1).get().catch(()=>null)
+        const qsnap = await col.where('uids','array-contains', uid).get().catch(()=>null)
         if (!qsnap || qsnap.empty) { await interaction.reply({ content: 'Nenhuma partida pendente.', ephemeral: true }); return }
-        const doc = qsnap.docs[0]
+        let doc = null
+        let latest = -1
+        qsnap.forEach((d) => {
+          const dataTmp = d.data() || {}
+          const ok = String(dataTmp.status||'') === 'readyCheck'
+          const ts = dataTmp.createdAt && dataTmp.createdAt.toMillis ? dataTmp.createdAt.toMillis() : 0
+          if (ok && ts >= latest) { latest = ts; doc = d }
+        })
+        if (!doc) { await interaction.reply({ content: 'Nenhuma partida pendente.', ephemeral: true }); return }
         const data = doc.data() || {}
         const row = new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId(`accept:${doc.id}`).setLabel('Aceitar Partida').setStyle(ButtonStyle.Success),
@@ -1804,7 +1814,7 @@ function startOAuthServer() {
       if (u.pathname === '/health') {
         res.setHeader('Content-Type', 'application/json')
         res.end(JSON.stringify({ ok: true, metrics }))
-      } else if (u.pathname === '/discord-oauth/callback') {
+      } else if (u.pathname === '/discord-oauth/callback' || u.pathname === '/discord_callback') {
         const code = u.searchParams.get('code')
         const stateUid = u.searchParams.get('state')
         if (!code || !stateUid) { res.statusCode = 400; res.end('invalid'); return }
