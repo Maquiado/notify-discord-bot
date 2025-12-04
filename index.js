@@ -50,6 +50,7 @@ const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildMessages, GatewayIntentBits.DirectMessages],
   partials: [Partials.Channel]
 })
+let initDone = false
 
 const token = process.env.DISCORD_TOKEN
 if (!token) {
@@ -404,6 +405,8 @@ async function getQueueChannel() {
 }
 
 async function onClientReady() {
+  if (initDone) return
+  initDone = true
   try { console.log('[boot]', new Date().toISOString(), 'ready', { user: client.user?.tag }) } catch {}
   try { ga.trackEvent('bot_ready', { tag: client.user?.tag || '' }) } catch {}
   try {
@@ -1212,7 +1215,7 @@ async function publishDiscordConfig() {
     async function ensurePinned(channel, content, marker, components, embed){
       if (!channel || channel.type !== ChannelType.GuildText) return
       try {
-        const pins = await channel.messages.fetchPinned().catch(()=>null)
+        const pins = await channel.messages.fetchPins().catch(()=>null)
         let mine = pins ? pins.find(m => m.author?.id === client.user?.id && String(m.content||'').startsWith(marker)) : null
         if (mine) {
           await mine.edit({ content, components: components ? [components] : [], embeds: embed ? [embed] : [] }).catch(()=>{})
@@ -1809,7 +1812,7 @@ async function sendMvpNotifications(doc) {
 }
 
 function startOAuthServer() {
-  const port = process.env.PORT ? Number(process.env.PORT) : 5050
+  const port = Number(process.env.OAUTH_PORT || process.env.PORT || 5050)
   const clientId = process.env.DISCORD_OAUTH_CLIENT_ID
   const clientSecret = process.env.DISCORD_OAUTH_CLIENT_SECRET
   const redirectUri = process.env.DISCORD_OAUTH_REDIRECT_URI
@@ -1819,6 +1822,8 @@ function startOAuthServer() {
     return
   }
   console.log('OAuth server ativo. redirect_uri:', redirectUri)
+  if (startOAuthServer._started) return
+  startOAuthServer._started = true
   const server = http.createServer(async (req, res) => {
     try {
       const u = new URL(req.url, `http://localhost:${port}`)
@@ -1900,7 +1905,8 @@ function startOAuthServer() {
       res.end('error')
     }
   })
-  server.listen(port)
+  server.on('error', (e) => { try { console.error('[oauth]', new Date().toISOString(), e && e.stack ? e.stack : e) } catch {} })
+  try { server.listen(port, '0.0.0.0') } catch (e) { try { console.error('[oauth listen]', new Date().toISOString(), e && e.stack ? e.stack : e) } catch {} }
 }
 
 async function logGuildInfo() {
