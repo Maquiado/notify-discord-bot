@@ -19,6 +19,7 @@ const {
 } = require('discord.js')
 const path = require('path')
 const fs = require('fs')
+const ga = require('./ga')
 const emojiCache = {}
 
 function parseServiceAccount() {
@@ -404,6 +405,7 @@ async function getQueueChannel() {
 
 client.once('ready', async () => {
   try { console.log('[boot]', new Date().toISOString(), 'ready', { user: client.user?.tag }) } catch {}
+  try { ga.trackEvent('bot_ready', { tag: client.user?.tag || '' }) } catch {}
   try {
     await registerCommands()
     console.log('[boot]', new Date().toISOString(), 'commands registered')
@@ -420,6 +422,7 @@ client.once('ready', async () => {
 client.on('interactionCreate', async (interaction) => {
   try {
     try { const name = interaction.isChatInputCommand() ? interaction.commandName : (interaction.isButton() ? interaction.customId : 'other'); console.log('[interaction]', new Date().toISOString(), { type: interaction.type, name, userId: interaction.user?.id }) } catch {}
+    try { if (interaction.isChatInputCommand()) { ga.trackEvent('bot_command', { command: interaction.commandName }, interaction.user?.id) } else if (interaction.isButton()) { ga.trackEvent('bot_button', { id: interaction.customId }, interaction.user?.id) } } catch {}
     if (interaction.isChatInputCommand()) {
       if (interaction.commandName === 'fila') {
         const discordId = interaction.user.id
@@ -523,28 +526,29 @@ client.on('interactionCreate', async (interaction) => {
         const all = interaction.options.getBoolean('all')
         let count = 0
         const col = db.collection('aguardandoPartidas')
-        const qsnap = await col.get()
         const limitMs = age ? Date.now() - age * 60 * 1000 : 0
-        for (const doc of qsnap.docs) {
-          const d = doc.data() || {}
-          if (d.status !== 'readyCheck') continue
-          if (all) { await doc.ref.delete(); count++; continue }
-          const createdMs = d.createdAt && d.createdAt.toMillis ? d.createdAt.toMillis() : 0
-          if (!limitMs || (createdMs && createdMs < limitMs)) { await doc.ref.delete(); count++ }
+        let q = col.where('status','==','readyCheck')
+        if (!all && limitMs) {
+          const limitTs = admin.firestore.Timestamp.fromMillis(limitMs)
+          q = q.where('createdAt','<', limitTs)
         }
+        const qsnap = await q.get()
+        for (const doc of qsnap.docs) { try { await doc.ref.delete(); count++ } catch {} }
         await interaction.reply({ content: `Ready Checks apagados: ${count}`, ephemeral: true })
       }
       if (interaction.commandName === 'readylist') {
-        const qsnap = await db.collection('aguardandoPartidas').get()
+        const q = db.collection('aguardandoPartidas')
+          .where('status','==','readyCheck')
+          .orderBy('createdAt','desc')
+          .limit(50)
+        const qsnap = await q.get()
         const lines = []
         qsnap.forEach((doc) => {
           const d = doc.data() || {}
-          if (d.status === 'readyCheck') {
-            const t = d.createdAt && d.createdAt.toDate ? d.createdAt.toDate().toLocaleString() : 'sem data'
-            lines.push(`${doc.id} - ${t}`)
-          }
+          const t = d.createdAt && d.createdAt.toDate ? d.createdAt.toDate().toLocaleString() : 'sem data'
+          lines.push(`${doc.id} - ${t}`)
         })
-        await interaction.reply({ content: lines.slice(0, 50).join('\n') || 'Nenhum Ready Check.', ephemeral: true })
+        await interaction.reply({ content: lines.join('\n') || 'Nenhum Ready Check.', ephemeral: true })
       }
       if (interaction.commandName === 'clearqueue') {
         const discordId = interaction.user.id
@@ -1080,9 +1084,9 @@ async function getRankingForUser(d) {
 
 async function isInQueue(uid) {
   try {
-    const qsnap = await db.collection('queue').where('uid','==',uid).limit(1).get()
-    if (qsnap.empty) return null
-    return qsnap.docs[0]
+    const snap = await queueDoc(uid).get()
+    if (!snap.exists) return null
+    return snap
   } catch { return null }
 }
 
@@ -1532,7 +1536,15 @@ async function sendFinalResult(doc) {
 }
 
 function setupMatchListeners() {
-  db.collection('aguardandoPartidas').where('status', 'in', ['readyCheck','pending','Aberta']).onSnapshot((snapshot) => {
+  const READY_WINDOW_MINUTES = parseInt(process.env.READY_WINDOW_MINUTES || '180', 10)
+  const READY_LISTENER_LIMIT = parseInt(process.env.READY_LISTENER_LIMIT || '50', 10)
+  const sinceTs = admin.firestore.Timestamp.fromMillis(Date.now() - READY_WINDOW_MINUTES * 60 * 1000)
+  db.collection('aguardandoPartidas')
+    .where('status', 'in', ['readyCheck','pending','Aberta'])
+    .where('createdAt','>=', sinceTs)
+    .orderBy('createdAt','desc')
+    .limit(READY_LISTENER_LIMIT)
+    .onSnapshot((snapshot) => {
     snapshot.docChanges().forEach((change) => {
       const doc = change.doc
       const data = doc.data()
@@ -1565,7 +1577,12 @@ function setupMatchListeners() {
       }
     })
   })
-  db.collection('historicoPartidas').where('createdAt', '>=', admin.firestore.Timestamp.fromMillis(startOfYesterdayMs())).onSnapshot((snapshot) => {
+  const HISTORICO_LISTENER_LIMIT = parseInt(process.env.HISTORICO_LISTENER_LIMIT || '200', 10)
+  db.collection('historicoPartidas')
+    .where('createdAt', '>=', admin.firestore.Timestamp.fromMillis(startOfYesterdayMs()))
+    .orderBy('createdAt','desc')
+    .limit(HISTORICO_LISTENER_LIMIT)
+    .onSnapshot((snapshot) => {
     snapshot.docChanges().forEach((change) => {
       const doc = change.doc
       const data = doc.data()
