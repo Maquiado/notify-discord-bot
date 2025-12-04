@@ -1532,7 +1532,7 @@ async function sendFinalResult(doc) {
 }
 
 function setupMatchListeners() {
-  db.collection('aguardandoPartidas').onSnapshot((snapshot) => {
+  db.collection('aguardandoPartidas').where('status', 'in', ['readyCheck','pending','Aberta']).onSnapshot((snapshot) => {
     snapshot.docChanges().forEach((change) => {
       const doc = change.doc
       const data = doc.data()
@@ -1565,7 +1565,7 @@ function setupMatchListeners() {
       }
     })
   })
-  db.collection('historicoPartidas').onSnapshot((snapshot) => {
+  db.collection('historicoPartidas').where('createdAt', '>=', admin.firestore.Timestamp.fromMillis(startOfYesterdayMs())).onSnapshot((snapshot) => {
     snapshot.docChanges().forEach((change) => {
       const doc = change.doc
       const data = doc.data()
@@ -1670,7 +1670,7 @@ async function setupQueueChannelListeners() {
         if (pending) { schedule(pending) }
       }, DEBOUNCE_MS)
     }
-    db.collection('queue').onSnapshot((snapshot) => { schedule(snapshot) })
+    db.collection('queue').orderBy('timestamp', 'desc').limit(50).onSnapshot((snapshot) => { schedule(snapshot) })
   } catch {}
 }
 
@@ -1692,7 +1692,7 @@ async function createUniqueCode(discordId) {
 }
 
 async function setupLinkListeners() {
-  db.collection('linkRequests').onSnapshot((snapshot) => {
+  db.collection('linkRequests').where('createdAt', '>=', admin.firestore.Timestamp.fromMillis(Date.now() - 60 * 60 * 1000)).onSnapshot((snapshot) => {
     snapshot.docChanges().forEach(async (change) => {
       if (change.type !== 'added') return
       const doc = change.doc
