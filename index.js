@@ -1549,12 +1549,7 @@ function setupMatchListeners() {
   const READY_WINDOW_MINUTES = parseInt(process.env.READY_WINDOW_MINUTES || '180', 10)
   const READY_LISTENER_LIMIT = parseInt(process.env.READY_LISTENER_LIMIT || '50', 10)
   const sinceTs = admin.firestore.Timestamp.fromMillis(Date.now() - READY_WINDOW_MINUTES * 60 * 1000)
-  db.collection('aguardandoPartidas')
-    .where('status', 'in', ['readyCheck','pending','Aberta'])
-    .where('createdAt','>=', sinceTs)
-    .orderBy('createdAt','desc')
-    .limit(READY_LISTENER_LIMIT)
-    .onSnapshot((snapshot) => {
+  function handleSnapshot(snapshot) {
     snapshot.docChanges().forEach((change) => {
       const doc = change.doc
       const data = doc.data()
@@ -1586,7 +1581,23 @@ function setupMatchListeners() {
         sendFinalResult(doc)
       }
     })
-  })
+  }
+  try {
+    const q0 = db.collection('aguardandoPartidas')
+      .where('status', 'in', ['readyCheck','pending','Aberta'])
+      .where('createdAt','>=', sinceTs)
+      .orderBy('createdAt','desc')
+      .limit(READY_LISTENER_LIMIT)
+    q0.onSnapshot(handleSnapshot, () => {
+      try {
+        const q1 = db.collection('aguardandoPartidas')
+          .where('createdAt','>=', sinceTs)
+          .orderBy('createdAt','desc')
+          .limit(READY_LISTENER_LIMIT)
+        q1.onSnapshot(handleSnapshot)
+      } catch {}
+    })
+  } catch {}
   const HISTORICO_LISTENER_LIMIT = parseInt(process.env.HISTORICO_LISTENER_LIMIT || '200', 10)
   db.collection('historicoPartidas')
     .where('createdAt', '>=', admin.firestore.Timestamp.fromMillis(startOfYesterdayMs()))
