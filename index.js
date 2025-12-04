@@ -270,7 +270,7 @@ function normalizeElo(s){
 
 async function formatTeamsMentionsFromHistorico(matchId) {
   try {
-    const ref = db.collection('historicoPartidas').doc(matchId)
+    const ref = db.collection('Historico').doc(matchId)
     const snap = await ref.get()
     if (!snap.exists) return { blueStr: '-', redStr: '-' }
     const d = snap.data() || {}
@@ -292,7 +292,7 @@ async function formatTeamsMentionsFromHistorico(matchId) {
 
 async function getMatchPlayerNames(matchId){
   try {
-    const ref = db.collection('historicoPartidas').doc(matchId)
+    const ref = db.collection('Historico').doc(matchId)
     const snap = await ref.get()
     if (!snap.exists) return []
     const d = snap.data() || {}
@@ -307,7 +307,7 @@ async function getMatchPlayerNames(matchId){
 
 async function getMatchTeamNames(matchId){
   try {
-    const ref = db.collection('historicoPartidas').doc(matchId)
+    const ref = db.collection('Historico').doc(matchId)
     const snap = await ref.get()
     if (!snap.exists) return { t1: [], t2: [], time1Name: 'Time Azul', time2Name: 'Time Vermelho' }
     const d = snap.data() || {}
@@ -347,7 +347,7 @@ async function registerCommands() {
 }
 
 function queueDoc(uid) {
-  return db.collection('queue').doc(uid)
+  return db.collection('queuee').doc(uid)
 }
 
 function userDoc(uid) {
@@ -576,7 +576,7 @@ client.on('interactionCreate', async (interaction) => {
         const channelOk = String(interaction.channelId||'') === RESULTS_CHANNEL_ID
         if (!channelOk) { await safeReply(interaction, { content: 'Use este comando no canal de Resultados.' }); return }
         const id = `test_${Date.now()}`
-        const ref = db.collection('historicoPartidas').doc(id)
+        const ref = db.collection('Historico').doc(id)
         const nomes1 = ['Alpha','Bravo','Charlie','Delta','Echo']
         const nomes2 = ['Foxtrot','Golf','Hotel','India','Juliet']
         const payload = {
@@ -611,7 +611,7 @@ client.on('interactionCreate', async (interaction) => {
         if (!matchId) { await safeReply(interaction, { content: 'Informe o match_id.' }); return }
         if (!att || !att.url) { await safeReply(interaction, { content: 'Anexe o print da partida (imagem).' }); return }
         try {
-          const ref = db.collection('historicoPartidas').doc(matchId)
+          const ref = db.collection('Historico').doc(matchId)
           const snap = await ref.get()
           console.log('[resultado]', new Date().toISOString(), 'historico fetch', { exists: snap.exists })
           if (!snap.exists) { await safeReply(interaction, { content: 'Partida não encontrada.' }); return }
@@ -693,7 +693,7 @@ client.on('interactionCreate', async (interaction) => {
         if (!matchId || !vencedorOpt) { await safeReply(interaction, { content: 'Parâmetros inválidos.' }); return }
         if (!att || !att.url) { await safeReply(interaction, { content: 'Anexe o print da partida (imagem).' }); return }
         try {
-          const ref = db.collection('historicoPartidas').doc(matchId)
+          const ref = db.collection('Historico').doc(matchId)
           const snap = await ref.get()
           console.log('[corrigirresultado]', new Date().toISOString(), 'historico fetch', { exists: snap.exists })
           if (!snap.exists) { await safeReply(interaction, { content: 'Partida não encontrada.' }); return }
@@ -1167,11 +1167,11 @@ function docCreatedMs(data) {
 }
 
 async function hasAnnounced(type, id) {
-  try { const snap = await db.collection('notifications').doc(`${type}:${id}`).get(); return snap.exists } catch { return false }
+  try { const snap = await db.collection('Notificacoes').doc(`${type}:${id}`).get(); return snap.exists } catch { return false }
 }
 
 async function markAnnounced(type, id) {
-  try { await db.collection('notifications').doc(`${type}:${id}`).set({ ts: admin.firestore.FieldValue.serverTimestamp() }, { merge: true }) } catch {}
+  try { await db.collection('Notificacoes').doc(`${type}:${id}`).set({ ts: admin.firestore.FieldValue.serverTimestamp() }, { merge: true }) } catch {}
 }
 
 function aplicarXp(tier, divisao, xp, isWin) {
@@ -1604,7 +1604,7 @@ function setupMatchListeners() {
     })
   } catch {}
   const HISTORICO_LISTENER_LIMIT = parseInt(process.env.HISTORICO_LISTENER_LIMIT || '200', 10)
-  db.collection('historicoPartidas')
+  db.collection('Historico')
     .where('createdAt', '>=', admin.firestore.Timestamp.fromMillis(startOfYesterdayMs()))
     .orderBy('createdAt','desc')
     .limit(HISTORICO_LISTENER_LIMIT)
@@ -1713,7 +1713,7 @@ async function setupQueueChannelListeners() {
         if (pending) { schedule(pending) }
       }, DEBOUNCE_MS)
     }
-    db.collection('queue').orderBy('timestamp', 'desc').limit(50).onSnapshot((snapshot) => { schedule(snapshot) })
+    db.collection('queuee').orderBy('timestamp', 'desc').limit(50).onSnapshot((snapshot) => { schedule(snapshot) })
   } catch {}
 }
 
