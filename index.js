@@ -51,6 +51,8 @@ const client = new Client({
   partials: [Partials.Channel]
 })
 let initDone = false
+const discordJsVersion = (()=>{ try { const v = require('discord.js/package.json').version || '14.0.0'; return v } catch { return '14.0.0' } })()
+const discordJsMajor = parseInt(String(discordJsVersion).split('.')[0] || '14', 10)
 
 const token = process.env.DISCORD_TOKEN
 if (!token) {
@@ -421,8 +423,7 @@ async function onClientReady() {
   try { console.log('[boot]', new Date().toISOString(), 'listeners started') } catch {}
   startOAuthServer()
 }
-client.once('ready', onClientReady)
-client.once('clientReady', onClientReady)
+if (discordJsMajor >= 15) { client.once('clientReady', onClientReady) } else { client.once('ready', onClientReady) }
 
 client.on('interactionCreate', async (interaction) => {
   try {
