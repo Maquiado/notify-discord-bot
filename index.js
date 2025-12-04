@@ -15,7 +15,8 @@ const {
   REST,
   Routes,
   ChannelType,
-  AttachmentBuilder
+  AttachmentBuilder,
+  MessageFlags
 } = require('discord.js')
 const path = require('path')
 const fs = require('fs')
@@ -121,11 +122,11 @@ async function safeReply(interaction, data){
     if (interaction.deferred || interaction.replied) {
       return await interaction.editReply(data)
     } else {
-      return await interaction.reply({ ...(typeof data === 'object' ? data : { content: String(data||'') }), ephemeral: true })
+      return await interaction.reply({ ...(typeof data === 'object' ? data : { content: String(data||'') }), flags: MessageFlags.Ephemeral })
     }
   } catch (e) {
     try {
-      if (!interaction.deferred && !interaction.replied) { await interaction.deferReply({ ephemeral: true }) }
+      if (!interaction.deferred && !interaction.replied) { await interaction.deferReply({ flags: MessageFlags.Ephemeral }) }
       return await interaction.editReply(data)
     } catch {}
   }
@@ -433,25 +434,25 @@ client.on('interactionCreate', async (interaction) => {
       if (interaction.commandName === 'fila') {
         const discordId = interaction.user.id
         const uid = await resolveUidByDiscordId(discordId)
-        if (!uid) { await interaction.reply({ content: 'Vincule seu Discord ao site com /linkuid ou /linkcode antes de usar a fila.', ephemeral: true }); return }
+        if (!uid) { await interaction.reply({ content: 'Vincule seu Discord ao site com /linkuid ou /linkcode antes de usar a fila.', flags: MessageFlags.Ephemeral }); return }
         const snap = await isInQueue(uid)
         const row = new ActionRowBuilder()
         const btnJoin = new ButtonBuilder().setCustomId(`queue_confirm_join:${uid}`).setLabel('Entrar na Fila').setStyle(ButtonStyle.Primary)
         const btnLeave = new ButtonBuilder().setCustomId(`queue_confirm_leave:${uid}`).setLabel('Sair da Fila').setStyle(ButtonStyle.Danger)
         if (!snap) {
           row.addComponents(btnJoin)
-          await interaction.reply({ content: 'Você não está na fila. Deseja entrar?', components: [row], ephemeral: true })
+          await interaction.reply({ content: 'Você não está na fila. Deseja entrar?', components: [row], flags: MessageFlags.Ephemeral })
           try { setTimeout(()=>{ interaction.deleteReply().catch(()=>{}) }, 30000) } catch {}
         } else {
           row.addComponents(btnLeave)
-          await interaction.reply({ content: 'Você já está na fila. Deseja sair?', components: [row], ephemeral: true })
+          await interaction.reply({ content: 'Você já está na fila. Deseja sair?', components: [row], flags: MessageFlags.Ephemeral })
           try { setTimeout(()=>{ interaction.deleteReply().catch(()=>{}) }, 30000) } catch {}
         }
       }
       if (interaction.commandName === 'perfil') {
         const discordId = interaction.user.id
         const uid = await resolveUidByDiscordId(discordId)
-        if (!uid) { await interaction.reply({ content: 'Vincule seu Discord ao site com /linkuid ou /linkcode para ver seu perfil.', ephemeral: true }); return }
+        if (!uid) { await interaction.reply({ content: 'Vincule seu Discord ao site com /linkuid ou /linkcode para ver seu perfil.', flags: MessageFlags.Ephemeral }); return }
         const uref = userDoc(uid)
         const usnap = await uref.get()
         const data = usnap.exists ? usnap.data() : {}
@@ -469,7 +470,7 @@ client.on('interactionCreate', async (interaction) => {
             { name: 'Role Secundária', value: `${data.roleSecundaria ?? '-'}`, inline: true },
             { name: 'Status da Fila', value: inQueue ? 'Na fila' : 'Fora da fila', inline: true }
           )
-        await interaction.reply({ embeds: [embed], ephemeral: true })
+        await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral })
       }
       if (interaction.commandName === 'linkuid') {
         const uid = interaction.options.getString('uid')
@@ -486,31 +487,31 @@ client.on('interactionCreate', async (interaction) => {
           }
           const discordId = interaction.user.id
           const q = await db.collection('users').where('discordUserId','==',discordId).limit(1).get()
-          if (!q.empty && q.docs[0].id !== uid) { await interaction.reply({ content: 'Seu Discord já está vinculado a outro UID.', ephemeral: true }); return }
+          if (!q.empty && q.docs[0].id !== uid) { await interaction.reply({ content: 'Seu Discord já está vinculado a outro UID.', flags: MessageFlags.Ephemeral }); return }
           await ref.set({ discordUserId: discordId, discordUsername: interaction.user.username, discordLinkedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true })
-          await interaction.reply({ content: 'Vínculo com o site concluído com sucesso. Deslogue da sua conta e logue novamente.', ephemeral: true })
+          await interaction.reply({ content: 'Vínculo com o site concluído com sucesso. Deslogue da sua conta e logue novamente.', flags: MessageFlags.Ephemeral })
         } catch (e) {
-          await interaction.reply({ content: 'Falha ao vincular. Tente novamente mais tarde.', ephemeral: true })
+          await interaction.reply({ content: 'Falha ao vincular. Tente novamente mais tarde.', flags: MessageFlags.Ephemeral })
         }
       }
       if (interaction.commandName === 'linkcode') {
         try {
           const discordId = interaction.user.id
           const code = await createUniqueCode(discordId)
-          if (!code) { await interaction.reply({ content: 'Não foi possível gerar código. Tente novamente.', ephemeral: true }); return }
-          await interaction.reply({ content: `Seu código: ${code}. Use-o em Editar Perfil → Vincular pelo Código. Expira em 10 minutos.`, ephemeral: true })
+          if (!code) { await interaction.reply({ content: 'Não foi possível gerar código. Tente novamente.', flags: MessageFlags.Ephemeral }); return }
+          await interaction.reply({ content: `Seu código: ${code}. Use-o em Editar Perfil → Vincular pelo Código. Expira em 10 minutos.`, flags: MessageFlags.Ephemeral })
           try { const user = await client.users.fetch(discordId); await user.send({ content: `Código de vínculo: ${code}. Expira em 10 minutos.` }) } catch {}
         } catch {
-          await interaction.reply({ content: 'Falha ao gerar código.', ephemeral: true })
+          await interaction.reply({ content: 'Falha ao gerar código.', flags: MessageFlags.Ephemeral })
         }
       }
       if (interaction.commandName === 'pendente') {
         const discordId = interaction.user.id
         const uid = await resolveUidByDiscordId(discordId)
-        if (!uid) { await interaction.reply({ content: 'Vincule seu Discord ao site com /linkuid ou /linkcode para ver pendências.', ephemeral: true }); return }
+        if (!uid) { await interaction.reply({ content: 'Vincule seu Discord ao site com /linkuid ou /linkcode para ver pendências.', flags: MessageFlags.Ephemeral }); return }
         const col = db.collection('aguardandoPartidas')
         const qsnap = await col.where('uids','array-contains', uid).get().catch(()=>null)
-        if (!qsnap || qsnap.empty) { await interaction.reply({ content: 'Nenhuma partida pendente.', ephemeral: true }); return }
+        if (!qsnap || qsnap.empty) { await interaction.reply({ content: 'Nenhuma partida pendente.', flags: MessageFlags.Ephemeral }); return }
         let doc = null
         let latest = -1
         qsnap.forEach((d) => {
@@ -519,7 +520,7 @@ client.on('interactionCreate', async (interaction) => {
           const ts = dataTmp.createdAt && dataTmp.createdAt.toMillis ? dataTmp.createdAt.toMillis() : 0
           if (ok && ts >= latest) { latest = ts; doc = d }
         })
-        if (!doc) { await interaction.reply({ content: 'Nenhuma partida pendente.', ephemeral: true }); return }
+        if (!doc) { await interaction.reply({ content: 'Nenhuma partida pendente.', flags: MessageFlags.Ephemeral }); return }
         const data = doc.data() || {}
         const row = new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId(`accept:${doc.id}`).setLabel('Aceitar Partida').setStyle(ButtonStyle.Success),
@@ -532,7 +533,7 @@ client.on('interactionCreate', async (interaction) => {
           { name: 'Expira em', value: data.timestampFim?.toDate ? data.timestampFim.toDate().toLocaleString() : '—', inline: true },
           { name: 'Jogadores', value: detalhes }
         )
-        await interaction.reply({ embeds: [embed], components: [row], ephemeral: true })
+        await interaction.reply({ embeds: [embed], components: [row], flags: MessageFlags.Ephemeral })
       }
       
       if (interaction.commandName === 'cleanupready') {
@@ -548,7 +549,7 @@ client.on('interactionCreate', async (interaction) => {
         }
         const qsnap = await q.get()
         for (const doc of qsnap.docs) { try { await doc.ref.delete(); count++ } catch {} }
-        await interaction.reply({ content: `Ready Checks apagados: ${count}`, ephemeral: true })
+        await interaction.reply({ content: `Ready Checks apagados: ${count}`, flags: MessageFlags.Ephemeral })
       }
       if (interaction.commandName === 'readylist') {
         const q = db.collection('aguardandoPartidas')
@@ -562,14 +563,14 @@ client.on('interactionCreate', async (interaction) => {
           const t = d.createdAt && d.createdAt.toDate ? d.createdAt.toDate().toLocaleString() : 'sem data'
           lines.push(`${doc.id} - ${t}`)
         })
-        await interaction.reply({ content: lines.join('\n') || 'Nenhum Ready Check.', ephemeral: true })
+        await interaction.reply({ content: lines.join('\n') || 'Nenhum Ready Check.', flags: MessageFlags.Ephemeral })
       }
       if (interaction.commandName === 'clearqueue') {
         const discordId = interaction.user.id
         const uid = await resolveUidByDiscordId(discordId)
-        if (!uid) { await interaction.reply({ content: 'Nenhum vínculo encontrado. Use /link primeiro.', ephemeral: true }); return }
+        if (!uid) { await interaction.reply({ content: 'Nenhum vínculo encontrado. Use /link primeiro.', flags: MessageFlags.Ephemeral }); return }
         await queueDoc(uid).delete().catch(() => {})
-        await interaction.reply({ content: 'Sua entrada na fila foi removida.', ephemeral: true })
+        await interaction.reply({ content: 'Sua entrada na fila foi removida.', flags: MessageFlags.Ephemeral })
       }
       if (interaction.commandName === 'maketestmatch') {
         const channelOk = String(interaction.channelId||'') === RESULTS_CHANNEL_ID
@@ -586,7 +587,7 @@ client.on('interactionCreate', async (interaction) => {
         }
         try {
           await ref.set(payload)
-          await interaction.reply({ content: `Partida de teste criada. match_id: ${id}`, ephemeral: true })
+          await interaction.reply({ content: `Partida de teste criada. match_id: ${id}`, flags: MessageFlags.Ephemeral })
           try {
             const pub = new EmbedBuilder().setTitle('Partida de Teste Criada').addFields(
               { name: 'match_id', value: id, inline: true },
@@ -596,7 +597,7 @@ client.on('interactionCreate', async (interaction) => {
             await sendTemporaryChannelMessage(interaction.channel, { embeds: [pub] }, 60*1000)
           } catch {}
         } catch (e) {
-          await interaction.reply({ content: 'Falha ao criar partida de teste.', ephemeral: true })
+          await interaction.reply({ content: 'Falha ao criar partida de teste.', flags: MessageFlags.Ephemeral })
         }
       }
       if (interaction.commandName === 'resultado') {
@@ -605,7 +606,7 @@ client.on('interactionCreate', async (interaction) => {
         const matchId = interaction.options.getString('match_id')
         const att = interaction.options.getAttachment('imagem')
         console.log('[resultado]', new Date().toISOString(), 'start', { userId: interaction.user.id, channelId: interaction.channelId, matchId })
-        if (!interaction.deferred && !interaction.replied) { try { await interaction.deferReply({ ephemeral: true }) } catch (e) { console.error('[resultado]', new Date().toISOString(), 'defer error', e && e.code, e && e.message) } }
+        if (!interaction.deferred && !interaction.replied) { try { await interaction.deferReply({ flags: MessageFlags.Ephemeral }) } catch (e) { console.error('[resultado]', new Date().toISOString(), 'defer error', e && e.code, e && e.message) } }
         console.log('[resultado]', new Date().toISOString(), 'deferred')
         if (!matchId) { await safeReply(interaction, { content: 'Informe o match_id.' }); return }
         if (!att || !att.url) { await safeReply(interaction, { content: 'Anexe o print da partida (imagem).' }); return }
@@ -681,13 +682,13 @@ client.on('interactionCreate', async (interaction) => {
       }
       if (interaction.commandName === 'corrigirresultado') {
         const channelOk = String(interaction.channelId||'') === RESULTS_CHANNEL_ID
-        if (!channelOk) { await interaction.reply({ content: 'Use este comando no canal de Resultados.', ephemeral: true }); return }
+        if (!channelOk) { await interaction.reply({ content: 'Use este comando no canal de Resultados.', flags: MessageFlags.Ephemeral }); return }
         const matchId = interaction.options.getString('match_id')
         const vencedorOpt = interaction.options.getString('vencedor')
         const motivo = interaction.options.getString('motivo') || ''
         const att = interaction.options.getAttachment('imagem')
         console.log('[corrigirresultado]', new Date().toISOString(), 'start', { userId: interaction.user.id, channelId: interaction.channelId, matchId, vencedorOpt, motivoLen: String(motivo||'').length })
-        if (!interaction.deferred && !interaction.replied) { try { await interaction.deferReply({ ephemeral: true }) } catch (e) { console.error('[corrigirresultado]', new Date().toISOString(), 'defer error', e && e.code, e && e.message) } }
+        if (!interaction.deferred && !interaction.replied) { try { await interaction.deferReply({ flags: MessageFlags.Ephemeral }) } catch (e) { console.error('[corrigirresultado]', new Date().toISOString(), 'defer error', e && e.code, e && e.message) } }
         console.log('[corrigirresultado]', new Date().toISOString(), 'deferred')
         if (!matchId || !vencedorOpt) { await safeReply(interaction, { content: 'Parâmetros inválidos.' }); return }
         if (!att || !att.url) { await safeReply(interaction, { content: 'Anexe o print da partida (imagem).' }); return }
@@ -756,12 +757,12 @@ client.on('interactionCreate', async (interaction) => {
       if (interaction.commandName === 'channels') {
         const guildId = process.env.DISCORD_GUILD_ID
         const guild = guildId ? await client.guilds.fetch(guildId).catch(() => null) : client.guilds.cache.first()
-        if (!guild) { await interaction.reply({ content: 'Guild não encontrada.', ephemeral: true }); return }
+        if (!guild) { await interaction.reply({ content: 'Guild não encontrada.', flags: MessageFlags.Ephemeral }); return }
         const channels = await guild.channels.fetch()
         const lines = []
         channels.forEach((c) => { if (c && c.type === ChannelType.GuildText) lines.push(`${c.name} ${c.id}`) })
         const out = lines.slice(0, 50).join('\n')
-        await interaction.reply({ content: out || 'Sem canais de texto.', ephemeral: true })
+        await interaction.reply({ content: out || 'Sem canais de texto.', flags: MessageFlags.Ephemeral })
       }
   } else if (interaction.isButton()) {
     const cid = interaction.customId
@@ -773,7 +774,7 @@ client.on('interactionCreate', async (interaction) => {
     const uid = await resolveUidByDiscordId(userId)
     
     if (action === 'perfil_open') {
-      if (!uid) { await interaction.reply({ content: 'Vincule seu Discord ao site com /linkuid ou /linkcode para ver seu perfil.', ephemeral: true }); return }
+      if (!uid) { await interaction.reply({ content: 'Vincule seu Discord ao site com /linkuid ou /linkcode para ver seu perfil.', flags: MessageFlags.Ephemeral }); return }
       const uref = userDoc(uid)
       const usnap = await uref.get()
       const data = usnap.exists ? usnap.data() : {}
@@ -791,32 +792,32 @@ client.on('interactionCreate', async (interaction) => {
           { name: 'Role Secundária', value: `${data.roleSecundaria ?? '-'}`, inline: true },
           { name: 'Status da Fila', value: inQueue ? 'Na fila' : 'Fora da fila', inline: true }
         )
-      await interaction.reply({ embeds: [embed], ephemeral: true })
+      await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral })
       try { setTimeout(()=>{ interaction.deleteReply().catch(()=>{}) }, 10000) } catch {}
       return
     }
     if ((action === 'accept' || action === 'decline') && targetUserId && targetUserId !== userId) {
-      await interaction.reply({ content: 'Este botão não é para você.', ephemeral: true });
+      await interaction.reply({ content: 'Este botão não é para você.', flags: MessageFlags.Ephemeral });
       return
     }
     if (action === 'linkuid_start') {
       const txt = 'Para vincular via UID: Abra Editar Perfil no site, copie seu UID e use o comando /linkuid uid:<seu UID> aqui no Discord.'
-      await interaction.reply({ content: txt, ephemeral: true }); return
+      await interaction.reply({ content: txt, flags: MessageFlags.Ephemeral }); return
     }
     if (action === 'linkcode_start') {
       const code = await createUniqueCode(userId)
-      if (!code) { await interaction.reply({ content: 'Não foi possível gerar código. Tente novamente.', ephemeral: true }); return }
-      await interaction.reply({ content: `Seu código: ${code}. Use-o em Editar Perfil → Vincular pelo Código. Expira em 10 minutos.`, ephemeral: true }); return
+      if (!code) { await interaction.reply({ content: 'Não foi possível gerar código. Tente novamente.', flags: MessageFlags.Ephemeral }); return }
+      await interaction.reply({ content: `Seu código: ${code}. Use-o em Editar Perfil → Vincular pelo Código. Expira em 10 minutos.`, flags: MessageFlags.Ephemeral }); return
     }
     if (action === 'queue_join') {
-      if (!uid) { await interaction.reply({ content: 'Vincule seu Discord ao site com /linkuid ou /linkcode antes de entrar na fila.', ephemeral: true }); return }
+      if (!uid) { await interaction.reply({ content: 'Vincule seu Discord ao site com /linkuid ou /linkcode antes de entrar na fila.', flags: MessageFlags.Ephemeral }); return }
       const existing = await isInQueue(uid)
       if (existing) {
         const msg = [
           'Você já está na fila.',
           '• Para sair, clique em "Sair da Fila" ou use o comando /fila.'
         ].join('\n')
-        await interaction.reply({ content: msg, ephemeral: true })
+        await interaction.reply({ content: msg, flags: MessageFlags.Ephemeral })
         return
       }
       const uref = userDoc(uid)
@@ -831,13 +832,13 @@ client.on('interactionCreate', async (interaction) => {
         '• Você receberá um Ready Check quando uma partida for montada.',
         '• Para sair, clique em "Sair da Fila" ou use o comando /fila.'
       ].join('\n')
-      await interaction.reply({ content: msg, ephemeral: true })
+      await interaction.reply({ content: msg, flags: MessageFlags.Ephemeral })
       try { setTimeout(()=>{ interaction.deleteReply().catch(()=>{}) }, 5000) } catch {}
       return
     }
     if (action === 'queue_confirm_join') {
       const targetUid = matchId || uid
-      if (!targetUid) { await interaction.reply({ content: 'Vincule seu Discord primeiro.', ephemeral: true }); return }
+      if (!targetUid) { await interaction.reply({ content: 'Vincule seu Discord primeiro.', flags: MessageFlags.Ephemeral }); return }
       const uref = userDoc(targetUid)
       const usnap = await uref.get()
       const data = usnap.exists ? usnap.data() : {}
@@ -847,29 +848,29 @@ client.on('interactionCreate', async (interaction) => {
         const nomeBase = data.playerName || data.nome || (interaction.member && interaction.member.displayName) || interaction.user.username
         const payload = userToQueueData(targetUid, { ...data, nome: nomeBase, elo: rank.elo, divisao: rank.divisao, discordUserId: interaction.user.id, discordUsername: interaction.user.username })
         await db.collection('queue').doc(targetUid).set(payload)
-        await interaction.reply({ content: 'Você entrou na fila!', ephemeral: true })
+        await interaction.reply({ content: 'Você entrou na fila!', flags: MessageFlags.Ephemeral })
         try { setTimeout(()=>{ interaction.deleteReply().catch(()=>{}) }, 5000) } catch {}
       } else {
-        await interaction.reply({ content: 'Você já está na fila.', ephemeral: true })
+        await interaction.reply({ content: 'Você já está na fila.', flags: MessageFlags.Ephemeral })
         try { setTimeout(()=>{ interaction.deleteReply().catch(()=>{}) }, 5000) } catch {}
       }
       return
     }
     if (action === 'queue_confirm_leave') {
       const targetUid = matchId || uid
-      if (!targetUid) { await interaction.reply({ content: 'Vincule seu Discord primeiro.', ephemeral: true }); return }
+      if (!targetUid) { await interaction.reply({ content: 'Vincule seu Discord primeiro.', flags: MessageFlags.Ephemeral }); return }
       try {
         const qsnap = await db.collection('queue').where('uid','==',targetUid).get()
         const dels = []
         qsnap.forEach(doc=> dels.push(doc.ref.delete()))
         await Promise.all(dels)
       } catch {}
-      await interaction.reply({ content: 'Você saiu da fila.', ephemeral: true })
+      await interaction.reply({ content: 'Você saiu da fila.', flags: MessageFlags.Ephemeral })
       try { setTimeout(()=>{ interaction.deleteReply().catch(()=>{}) }, 5000) } catch {}
       return
     }
     if (action === 'queue_leave') {
-      if (!uid) { await interaction.reply({ content: 'Nenhum vínculo encontrado. Use /linkuid ou /linkcode primeiro.', ephemeral: true }); return }
+      if (!uid) { await interaction.reply({ content: 'Nenhum vínculo encontrado. Use /linkuid ou /linkcode primeiro.', flags: MessageFlags.Ephemeral }); return }
       try {
         const qsnap = await db.collection('queue').where('uid','==',uid).get()
         const dels = []
@@ -880,7 +881,7 @@ client.on('interactionCreate', async (interaction) => {
         'Você saiu da fila.',
         '• Quando quiser retornar, clique em "Entrar na Fila" ou use o comando /fila.'
       ].join('\n')
-      await interaction.reply({ content: msg, ephemeral: true });
+      await interaction.reply({ content: msg, flags: MessageFlags.Ephemeral });
       try { setTimeout(()=>{ interaction.deleteReply().catch(()=>{}) }, 5000) } catch {}
       return
     }
@@ -896,9 +897,9 @@ client.on('interactionCreate', async (interaction) => {
     if (action === 'accept' || action === 'decline') {
       const mref = db.collection('aguardandoPartidas').doc(matchId)
       const msnap = await mref.get()
-      if (!msnap.exists) { await interaction.reply({ content: 'Partida não encontrada ou expirada.', ephemeral: true }); return }
+      if (!msnap.exists) { await interaction.reply({ content: 'Partida não encontrada ou expirada.', flags: MessageFlags.Ephemeral }); return }
       const matchData = msnap.data() || {}
-      if (uid && Array.isArray(matchData.uids) && !matchData.uids.includes(uid)) { await interaction.reply({ content: 'Você não está nesta partida.', ephemeral: true }); return }
+      if (uid && Array.isArray(matchData.uids) && !matchData.uids.includes(uid)) { await interaction.reply({ content: 'Você não está nesta partida.', flags: MessageFlags.Ephemeral }); return }
       await mref.set({ playersReady: msnap.data().playersReady || {}, playerAcceptances: msnap.data().playerAcceptances || {} }, { merge: true })
       if (action === 'accept') {
         await mref.update({ [`playersReady.${userId}`]: true })
@@ -935,7 +936,7 @@ client.on('interactionCreate', async (interaction) => {
               .setImage('attachment://background.png')
             await msg.edit({ embeds: [embed], components: [row] })
           }
-          await interaction.reply({ content: 'Aceite registrado.', ephemeral: true })
+          await interaction.reply({ content: 'Aceite registrado.', flags: MessageFlags.Ephemeral })
           try {
             const uids = Array.isArray(d.uids) ? d.uids : []
             const allAccepted = uids.length > 0 && uids.every(u => acceptMap[u] === 'accepted')
@@ -1001,7 +1002,7 @@ client.on('interactionCreate', async (interaction) => {
               await queueDoc(ouid).set(payload)
             }
           }
-          await interaction.reply({ content: 'Você recusou. Partida cancelada e fila ajustada.', ephemeral: true })
+          await interaction.reply({ content: 'Você recusou. Partida cancelada e fila ajustada.', flags: MessageFlags.Ephemeral })
         } catch {}
       }
     }
@@ -1013,12 +1014,12 @@ client.on('interactionCreate', async (interaction) => {
           const cmds = await interaction.client.application.commands.fetch()
           const cmd = [...cmds.values()].find(c => c.name === 'resultado')
           if (cmd) {
-            await interaction.reply({ content: `Clique para abrir o comando: </resultado:${cmd.id}>\nAnexe o print e informe o match_id copiado da página Player.`, ephemeral: true })
+            await interaction.reply({ content: `Clique para abrir o comando: </resultado:${cmd.id}>\nAnexe o print e informe o match_id copiado da página Player.`, flags: MessageFlags.Ephemeral })
           } else {
-            await interaction.reply({ content: 'Use o comando /resultado, anexe o print e informe o match_id.', ephemeral: true })
+            await interaction.reply({ content: 'Use o comando /resultado, anexe o print e informe o match_id.', flags: MessageFlags.Ephemeral })
           }
         } catch {
-          await interaction.reply({ content: 'Use o comando /resultado, anexe o print e informe o match_id.', ephemeral: true })
+          await interaction.reply({ content: 'Use o comando /resultado, anexe o print e informe o match_id.', flags: MessageFlags.Ephemeral })
         }
         return
       }
@@ -1031,7 +1032,7 @@ client.on('interactionCreate', async (interaction) => {
         if (interaction.deferred || interaction.replied) {
           try { await interaction.editReply({ content: 'Ocorreu um erro.' }) } catch {}
         } else {
-          try { await interaction.reply({ content: 'Ocorreu um erro.', ephemeral: true }) } catch {}
+          try { await interaction.reply({ content: 'Ocorreu um erro.', flags: MessageFlags.Ephemeral }) } catch {}
         }
       }
     } catch {}
