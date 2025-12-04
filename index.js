@@ -423,7 +423,7 @@ async function onClientReady() {
   try { console.log('[boot]', new Date().toISOString(), 'listeners started') } catch {}
   startOAuthServer()
 }
-if (discordJsMajor >= 15) { client.once('clientReady', onClientReady) } else { client.once('ready', onClientReady) }
+client.once('clientReady', onClientReady)
 
 client.on('interactionCreate', async (interaction) => {
   try {
