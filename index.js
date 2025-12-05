@@ -1,4 +1,4 @@
-const { db } = require('../bots/shared/firebase');
+const { db } = require('./firebase');
 const { Client, GatewayIntentBits, Partials } = require('discord.js');
 
 const token = process.env.DISCORD_BOT_TOKEN || '';
@@ -84,4 +84,3 @@ function startResultNotify() {
 
 client.once('ready', () => { startReadyNotify(); startResultNotify(); });
 client.login(token).catch((e) => console.error('discord login error', e));
-
