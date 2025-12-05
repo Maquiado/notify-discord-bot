@@ -222,7 +222,7 @@ function emojiFor(guildId, key) {
   return m[key] || ''
 }
 
-async function ensureGuildEmojisForChannel(ch) {
+  async function ensureGuildEmojisForChannel(ch) {
   try {
     if (!ch || !ch.guild) return {}
     const guild = ch.guild
@@ -354,9 +354,13 @@ function userDoc(uid) {
   return db.collection('users').doc(uid)
 }
 
+function discordDoc(uid) {
+  return db.collection('discord').doc(uid)
+}
+
 async function resolveUidByDiscordId(discordId) {
   try {
-    const q = await db.collection('users').where('discordUserId', '==', discordId).limit(1).get()
+    const q = await db.collection('discord').where('discordUserId', '==', discordId).limit(1).get()
     if (q.empty) return null
     return q.docs[0].id
   } catch { return null }
@@ -391,7 +395,7 @@ async function getOngoingChannel() {
 
 // Canal de Ready Check configurável via variável de ambiente
 // Usa `DISCORD_READY_CHANNEL_ID` e faz fallback para o canal de anúncios.
-async function getReadyChannel() {
+  async function getReadyChannel() {
   const id = process.env.DISCORD_READY_CHANNEL_ID || '1442962746537676831'
   if (id) {
     try { const ch = await client.channels.fetch(id); if (ch && ch.type === ChannelType.GuildText) return ch } catch {}
@@ -399,7 +403,7 @@ async function getReadyChannel() {
   return await getAnnounceChannel()
 }
 
-async function getQueueChannel() {
+  async function getQueueChannel() {
   const id = process.env.DISCORD_QUEUE_CHANNEL_ID || '1442962948703391764'
   if (id) {
     try { const ch = await client.channels.fetch(id); if (ch && ch.type === ChannelType.GuildText) return ch } catch {}
@@ -407,7 +411,7 @@ async function getQueueChannel() {
   return await getAnnounceChannel()
 }
 
-async function onClientReady() {
+  async function onClientReady() {
   if (initDone) return
   initDone = true
   try { console.log('[boot]', new Date().toISOString(), 'ready', { user: client.user?.tag }) } catch {}
@@ -486,9 +490,10 @@ client.on('interactionCreate', async (interaction) => {
             }, { merge: true })
           }
           const discordId = interaction.user.id
-          const q = await db.collection('users').where('discordUserId','==',discordId).limit(1).get()
+          const q = await db.collection('discord').where('discordUserId','==',discordId).limit(1).get()
           if (!q.empty && q.docs[0].id !== uid) { await interaction.reply({ content: 'Seu Discord já está vinculado a outro UID.', flags: MessageFlags.Ephemeral }); return }
-          await ref.set({ discordUserId: discordId, discordUsername: interaction.user.username, discordLinkedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true })
+          const globalName = interaction.user.globalName || null
+          await discordDoc(uid).set({ uid, discordUserId: discordId, discordUsername: interaction.user.username || '', discordGlobalNome: globalName, discordLinkedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true })
           await interaction.reply({ content: 'Vínculo com o site concluído com sucesso. Deslogue da sua conta e logue novamente.', flags: MessageFlags.Ephemeral })
         } catch (e) {
           await interaction.reply({ content: 'Falha ao vincular. Tente novamente mais tarde.', flags: MessageFlags.Ephemeral })
@@ -1186,7 +1191,7 @@ function aplicarXp(tier, divisao, xp, isWin) {
   return { tier: ELO_ORDER[ti], divisao: DIV_ORDER[di], xp }
 }
 
-async function resolveDiscordIdByUid(uid) { try { const snap = await userDoc(uid).get(); const d = snap.exists ? snap.data() : {}; return d.discordUserId || null } catch { return null } }
+async function resolveDiscordIdByUid(uid) { try { const snap = await discordDoc(uid).get(); const d = snap.exists ? snap.data() : {}; return d.discordUserId || null } catch { return null } }
 async function getRankingState(uid) { try { const snap = await userDoc(uid).get(); const d = snap.exists ? snap.data() : {}; return { tier: d.elo || 'Ferro', divisao: d.divisao || 'IV', xp: d.xp || 0 } } catch { return { tier: 'Ferro', divisao: 'IV', xp: 0 } }
 }
 
@@ -1296,14 +1301,7 @@ async function sendReadyCheckNotifications(doc) {
     const m = members.find((mm) => mm.user.username === name || mm.user.globalName === name)
     return m ? m.user.id : null
   }
-  async function resolveIdByUid(uid) {
-    if (!uid) return null
-    try {
-      const snap = await userDoc(uid).get()
-      const d = snap.exists ? snap.data() : null
-      return d && d.discordUserId ? d.discordUserId : null
-    } catch { return null }
-  }
+    async function resolveIdByUid(uid) { return await resolveDiscordIdByUid(uid) }
   // DMs desativadas: apenas anúncio no canal público
   const channel = await getQueueChannel()
   // Canal de destino para Ready Check: agora é sempre o canal de queue
@@ -1754,9 +1752,16 @@ async function setupLinkListeners() {
         const uref = userDoc(uid)
         const usnap = await uref.get()
         if (!usnap.exists) { await doc.ref.delete().catch(()=>{}); return }
-        const q = await db.collection('users').where('discordUserId','==',discordId).limit(1).get()
+        const q = await db.collection('discord').where('discordUserId','==',discordId).limit(1).get()
         if (!q.empty && q.docs[0].id !== uid) { await doc.ref.delete().catch(()=>{}); return }
-        await uref.set({ discordUserId: discordId, discordUsername: discordId ? (await client.users.fetch(discordId)).username : '', discordLinkedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true })
+        try {
+          const fetched = await client.users.fetch(discordId)
+          const username = fetched?.username || ''
+          const globalName = fetched?.globalName || null
+          await discordDoc(uid).set({ uid, discordUserId: discordId, discordUsername: username, discordGlobalNome: globalName, discordLinkedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true })
+        } catch {
+          await discordDoc(uid).set({ uid, discordUserId: discordId, discordUsername: '', discordGlobalNome: null, discordLinkedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true })
+        }
         await cref.update({ used: true, usedAt: admin.firestore.FieldValue.serverTimestamp(), uid })
         await doc.ref.delete().catch(()=>{})
         try { const user = await client.users.fetch(discordId); await user.send({ content: 'Vínculo com o site concluído com sucesso.' }) } catch {}
@@ -1891,9 +1896,9 @@ function startOAuthServer() {
         const uref = userDoc(stateUid)
         const usnap = await uref.get()
         if (!usnap.exists) { res.statusCode = 400; res.end('invalid uid'); return }
-        const q = await db.collection('users').where('discordUserId', '==', id).limit(1).get()
+        const q = await db.collection('discord').where('discordUserId', '==', id).limit(1).get()
         if (!q.empty && q.docs[0].id !== stateUid) { res.statusCode = 409; res.end('already linked'); return }
-        await uref.set({ discordUserId: id, discordUsername: username, discordLinkedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true })
+        await discordDoc(stateUid).set({ uid: stateUid, discordUserId: id, discordUsername: username || '', discordGlobalNome: me.global_name || null, discordLinkedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true })
         const base = sanitizeBaseUrl(process.env.SITE_BASE_URL || '')
         const redirect = joinBase(base, 'editarperfil.html?discord_linked=1')
         res.writeHead(302, { Location: redirect })
