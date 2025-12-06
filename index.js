@@ -1,5 +1,5 @@
-const { db } = require('./firebase');
-const { Client, GatewayIntentBits, Partials } = require('discord.js');
+import { db } from './src/firestore.js';
+import { Client, GatewayIntentBits, Partials } from 'discord.js';
 
 const token = (process.env.DISCORD_BOT_TOKEN || process.env.DISCORD_TOKEN || '').trim();
 const channelId = (process.env.DISCORD_CHANNEL_ID || process.env.DISCORD_READY_CHANNEL_ID || process.env.DISCORD_ANNOUNCE_CHANNEL_ID || process.env.DISCORD_QUEUE_CHANNEL_ID || '').trim();
