@@ -63,7 +63,7 @@ async function finalizeMatch(partidaId, vencedorSide) {
   return true;
 }
 
-client.on('ready', async () => {
+const onClientReady = async () => {
   if (channelId) {
     const q1 = db.collection('aguardandoPartidas').where('status', '==', 'pending');
     const q2 = db.collection('aguardandoPartidas').where('status', '==', 'readyCheck');
@@ -86,7 +86,9 @@ client.on('ready', async () => {
       await client.application.commands.create(cmd);
     }
   } catch (_) {}
-});
+};
+client.once('ready', onClientReady);
+client.once('clientReady', onClientReady);
 
 client.on('messageCreate', async (msg) => {
   if (!msg.content) return;
